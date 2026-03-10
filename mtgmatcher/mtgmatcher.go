@@ -22,12 +22,7 @@ func MatchId(inputId string, finishes ...bool) (string, error) {
 	// Look up in one of the possible maps
 	co, found := backend.UUIDs[inputId]
 	if !found {
-		// Second chance, lookup by scryfall id
-		co, found = backend.UUIDs[backend.Scryfall[inputId]]
-		if !found {
-			// Last chance, lookup by tcg id
-			co, found = backend.UUIDs[backend.Tcgplayer[inputId]]
-		}
+		co, found = backend.UUIDs[backend.ExternalIdentifiers[inputId]]
 	}
 	if !found {
 		return "", ErrCardUnknownId
@@ -212,13 +207,30 @@ func Match(inCard *InputCard) (cardId string, err error) {
 		return "", ErrUnsupported
 	}
 
-	// Pre-adjust special cards with duplicated names
-	if slices.Contains(duplicatedCardNames, inCard.Name) && (inCard.isMysteryList() || strings.Contains(inCard.Edition, "Playtest")) {
-		inCard.Name += " Playtest"
+	// Prefilter
+	switch inCard.Name {
+	case "Red Herring",
+		"Bind // Liberate",
+		"Pick Your Poison":
+		if inCard.isMysteryList() || inCard.Contains("Playtest") {
+			inCard.Name += " Playtest"
+		}
+	case "Unquenchable Fury":
+		if inCard.Contains("Battle the Horde") || inCard.Contains("Hero's Path") {
+			inCard.Name += " Token"
+		}
+	case "Shapeshifter":
+		if !(inCard.Contains("Edition") ||
+			inCard.Contains("Foreign") ||
+			inCard.Contains("Antiquities") ||
+			inCard.Contains("Reinassance") ||
+			inCard.Contains("Rinascimento")) {
+			inCard.Name += " Token"
+		}
 	}
 
 	// Get the card basic info to retrieve the Printings array
-	entry, found := backend.CardInfo[Normalize(inCard.Name)]
+	canonicalName, found := backend.CanonicalNames[Normalize(inCard.Name)]
 	if !found {
 		ogName := inCard.Name
 		// Fixup up the name and try again
@@ -228,7 +240,7 @@ func Match(inCard *InputCard) (cardId string, err error) {
 			logger.Printf("Adjusted name from '%s' to '%s'", ogName, inCard.Name)
 		}
 
-		entry, found = backend.CardInfo[Normalize(inCard.Name)]
+		canonicalName, found = backend.CanonicalNames[Normalize(inCard.Name)]
 		if !found {
 			// Return a safe error if it's a token
 			if IsToken(ogName) || Contains(inCard.Variation, "Oversize") {
@@ -240,23 +252,13 @@ func Match(inCard *InputCard) (cardId string, err error) {
 
 	// Restore the card to the canonical MTGJSON name
 	ogName = inCard.Name
-	inCard.Name = entry.Name
+	inCard.Name = canonicalName
 
 	// Fix up edition
 	ogEdition := inCard.Edition
 	adjustEdition(inCard)
 	if ogName != inCard.Name {
 		logger.Printf("Re-adjusted name from '%s' to '%s'", ogName, inCard.Name)
-		// If renamed, reload metadata in case of duplicate names
-		switch {
-		case inCard.Name == "Unquenchable Fury Token" || inCard.Name == "Shapeshifter Token":
-			fallthrough
-		case strings.Contains(inCard.Name, "Playtest") &&
-			slices.Contains(duplicatedCardNames, strings.Replace(inCard.Name, " Playtest", "", 1)):
-			entry = backend.CardInfo[Normalize(inCard.Name)]
-			inCard.Name = entry.Name
-			logger.Printf("Clashing name adjusted to '%s'", inCard.Name)
-		}
 	}
 	if ogEdition != inCard.Edition {
 		logger.Printf("Adjusted edition from '%s' to '%s'", ogEdition, inCard.Edition)
@@ -281,14 +283,18 @@ func Match(inCard *InputCard) (cardId string, err error) {
 		return "", ErrUnsupported
 	}
 
-	logger.Println("Processing", inCard, entry.Printings)
+	printings, err := Printings4Card(inCard.Name)
+	if err != nil {
+		logger.Println("Printings error:", err)
+		return "", err
+	}
 
 	// If there are multiple printings of the card, filter out to the
 	// minimum common elements, using the rules defined.
 	// Given that many tokens are not supported, make sure to filter
 	// out unrelated editions.
-	printings := entry.Printings
-	if len(printings) > 1 || backend.CardInfo[Normalize(ogName)].Layout == "token" {
+	logger.Println("Processing", inCard, printings)
+	if len(printings) > 1 || strings.HasSuffix(ogName, "Token") {
 		printings = filterPrintings(inCard, printings)
 		logger.Println("Filtered printings:", printings)
 
@@ -552,7 +558,7 @@ func adjustName(inCard *InputCard) {
 	if strings.Contains(strings.ToLower(inCard.Name), "token") {
 		return
 	}
-	_, found := backend.CardInfo[Normalize(inCard.Name+" Token")]
+	_, found := backend.CanonicalNames[Normalize(inCard.Name+" Token")]
 	if found {
 		inCard.Name += " Token"
 		return
@@ -573,7 +579,7 @@ func adjustName(inCard *InputCard) {
 		}
 		// Check card exists before updating the name
 		tmpName := strings.Join(fields, " ")
-		_, found := backend.CardInfo[Normalize(tmpName)]
+		_, found := backend.CanonicalNames[Normalize(tmpName)]
 		if found {
 			inCard.Name = tmpName
 			inCard.addToVariant(num)
@@ -688,11 +694,10 @@ func adjustName(inCard *InputCard) {
 			return
 		}
 
-		for cardName, props := range backend.CardInfo {
-			if HasPrefix(cardName, inCard.Name) {
-				inCard.Name = props.Name
-				return
-			}
+		uuids, err := SearchHasPrefix(inCard.Name)
+		if err == nil {
+			inCard.Name = backend.UUIDs[uuids[0]].Name
+			return
 		}
 	}
 
@@ -717,9 +722,11 @@ func adjustName(inCard *InputCard) {
 			}
 		}
 	}
-	for cardName, props := range backend.CardInfo {
-		if props.Layout != "normal" && props.Layout != "token" && HasPrefix(cardName, inCard.Name) {
-			inCard.Name = props.Name
+	uuids, _ := SearchHasPrefix(inCard.Name)
+	for _, uuid := range uuids {
+		co, _ := GetUUID(uuid)
+		if co.Layout != "normal" && co.Layout != "token" {
+			inCard.Name = co.Name
 			return
 		}
 	}
@@ -954,8 +961,6 @@ func adjustEdition(inCard *InputCard) {
 				inCard.Name = "Plains"
 				inCard.Variation = "670"
 			}
-		case inCard.Name == "Shapeshifter":
-			inCard.Name += " Token"
 		case Contains(inCard.Name, "Blightsteel Colossus"), Contains(inCard.Name, "Megatron"), Contains(inCard.Name, "FAS-BOR7 Horus"),
 			inCard.Contains("Blightsteel Colossus"), inCard.Contains("Megatron"), inCard.Contains("FAS-BOR7 Horus"):
 			if Contains(inCard.Name, "Megatron") || inCard.Contains("Megatron") {
@@ -1099,11 +1104,6 @@ func adjustEdition(inCard *InputCard) {
 		edition = backend.Sets["PBBD"].Name
 		variation = "Prerelease"
 
-	// Adjust the name of clashing cards
-	case slices.Contains(duplicatedCardNames, inCard.Name) &&
-		(inCard.isMysteryList() || strings.Contains(edition, "Playtest")):
-		inCard.Name += " Playtest"
-
 	// Single card mismatches
 	default:
 		switch inCard.Name {
@@ -1208,10 +1208,6 @@ func adjustEdition(inCard *InputCard) {
 		case "Evolving Wilds":
 			if inCard.isGenericPromo() {
 				edition = "Rivals of Ixalan Promos"
-			}
-		case "Unquenchable Fury":
-			if inCard.Edition == "Battle the Horde" || inCard.Contains("Hero's Path") {
-				inCard.Name += " Token"
 			}
 		case "Teferi, Master of Time":
 			num := ExtractNumber(variation)

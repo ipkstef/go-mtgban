@@ -73,6 +73,18 @@ type DeckCard struct {
 	UUID     string `json:"uuid"`
 }
 
+type SealedProduct struct {
+	Category    string                     `json:"category"`
+	Contents    map[string][]SealedContent `json:"contents"`
+	Identifiers map[string]string          `json:"identifiers"`
+	Name        string                     `json:"name"`
+	SetCode     string                     `json:"setCode"`
+	CardCount   int                        `json:"cardCount"`
+	ReleaseDate string                     `json:"releaseDate"`
+	Subtype     string                     `json:"subtype"`
+	UUID        string                     `json:"uuid"`
+}
+
 type Set struct {
 	BaseSetSize   int    `json:"baseSetSize"`
 	Code          string `json:"code"`
@@ -84,6 +96,7 @@ type Set struct {
 	Name          string `json:"name"`
 	ParentCode    string `json:"parentCode"`
 	ReleaseDate   string `json:"releaseDate"`
+	TokenSetCode  string `json:"tokenSetCode"`
 	Tokens        []Card `json:"tokens"`
 	Type          string `json:"type"`
 
@@ -93,17 +106,8 @@ type Set struct {
 	Colors []string
 
 	Booster       map[string]Booster `json:"booster"`
-	SealedProduct []struct {
-		Category    string                     `json:"category"`
-		Contents    map[string][]SealedContent `json:"contents"`
-		Identifiers map[string]string          `json:"identifiers"`
-		Name        string                     `json:"name"`
-		CardCount   int                        `json:"cardCount"`
-		ReleaseDate string                     `json:"releaseDate"`
-		Subtype     string                     `json:"subtype"`
-		UUID        string                     `json:"uuid"`
-	} `json:"sealedProduct"`
-	Decks []struct {
+	SealedProduct []SealedProduct    `json:"sealedProduct"`
+	Decks         []struct {
 		Code               string     `json:"code"`
 		Commander          []DeckCard `json:"commander"`
 		MainBoard          []DeckCard `json:"mainBoard"`

@@ -12,6 +12,8 @@ import (
 
 var cardTable = map[string]string{
 	"Who / What / When / Where / Why": "Who // What // When // Where // Why",
+
+	"Doric, Nature's Warden // Doric, Owlbear Avenger": "Casal, Lurkwood Pathfinder // Casal, Pathbreaker Owlbear",
 }
 
 func languageTags(language, edition, variant, number string) (string, string, error) {
@@ -72,6 +74,10 @@ func fixupSetCode(setCode string) string {
 			setCode = "H1R"
 		case "MH22", "MH23":
 			setCode = "MH2"
+		case "MB12":
+			setCode = "CMB1"
+		case "MB13":
+			setCode = "CMB2"
 		default:
 			setCode = setCode[:len(setCode)-1]
 		}
@@ -154,6 +160,10 @@ func ProcessSKU(cardName, SKU string) (*mtgmatcher.InputCard, error) {
 		case len(fields) > 2 && fields[0] == "SECRET":
 			setCode = fields[1]
 			number = strings.TrimLeft(fields[2], "0")
+			if len(mtgmatcher.MatchWithNumber(cardName, setCode, number)) == 0 &&
+				len(mtgmatcher.MatchWithNumber(cardName, "SLP", number)) > 0 {
+				setCode = "SLP"
+			}
 		// Separate the multiple LTR Prerelease cards
 		case strings.HasPrefix(number, "PRE_LTR_"):
 			number = strings.TrimPrefix(number, "PRE_LTR_")
@@ -177,6 +187,11 @@ func ProcessSKU(cardName, SKU string) (*mtgmatcher.InputCard, error) {
 		case len(fields) > 2 && len(fields[1]) == 4 &&
 			(strings.HasPrefix(number, "FEST_") || strings.HasPrefix(number, "CF_")):
 			setCode = "PF" + fields[1][2:]
+
+			if cardName == "Counterspell" && setCode == "PF23" {
+				setCode = "PF24"
+			}
+
 			cards := mtgmatcher.MatchInSet(cardName, setCode)
 			if len(cards) == 1 {
 				number = cards[0].Number
@@ -193,15 +208,28 @@ func ProcessSKU(cardName, SKU string) (*mtgmatcher.InputCard, error) {
 			if len(cards) == 1 {
 				number = cards[0].Number
 			}
-		}
-	// This set mixes together any playtest without the pw symbol
-	case "MB13":
-		for _, code := range []string{"CMB2", "MB2"} {
-			cards := mtgmatcher.MatchInSet(cardName, code)
+		case strings.HasPrefix(number, "LYLGS_"):
+			setCode = "PLG" + fields[1][2:]
+			if strings.HasPrefix(number, "LYLGS_2021b") {
+				setCode = "PLG21"
+			}
+			cards := mtgmatcher.MatchInSet(cardName, setCode)
 			if len(cards) == 1 {
-				setCode = cards[0].SetCode
 				number = cards[0].Number
-				break
+			}
+		case strings.HasPrefix(number, "BAB_MH"):
+			if number == "BAB_MH3_496" {
+				setCode = "MH3"
+				number = "496"
+			} else if number == "BAB_MH1_255" {
+				setCode = "MH1"
+				number = "255"
+			}
+		case strings.HasPrefix(number, "SSD_2024"):
+			setCode = "PSS4"
+			if number == "SSD_2024_005b" {
+				setCode = "PCBB"
+				number = "5"
 			}
 		}
 	case "PUMA":
@@ -209,10 +237,23 @@ func ProcessSKU(cardName, SKU string) (*mtgmatcher.InputCard, error) {
 		if len(cards) == 1 {
 			number = cards[0].Number
 		}
+	case "MH2":
+		cards := mtgmatcher.MatchWithNumber(cardName, "H2R", number)
+		if len(cards) == 1 {
+			setCode = "H2R"
+			number = cards[0].Number
+		}
 	default:
 		if strings.Contains(cardName, "//") {
 			number = strings.TrimSuffix(number, "a")
 		}
+	}
+
+	backup := mtgmatcher.InputCard{
+		Edition:   setCode,
+		Variation: number,
+		Foil:      foil,
+		Language:  language,
 	}
 
 	// Check if we found it and return the id
@@ -224,12 +265,41 @@ func ProcessSKU(cardName, SKU string) (*mtgmatcher.InputCard, error) {
 		if len(card.Finishes) == 1 &&
 			(((card.HasFinish(mtgmatcher.FinishFoil) || card.HasFinish(mtgmatcher.FinishEtched)) && !foil) ||
 				(card.HasFinish(mtgmatcher.FinishNonfoil) && foil)) {
-			return nil, errors.New("invalid number/foil combination")
+
+			// Let's check if there is a duplicated card somewhere, and repeat the check
+			out := mtgmatcher.MatchWithNumber(cardName, setCode, number+"★")
+			if len(out) == 1 {
+				card = out[0]
+
+				if len(card.Finishes) == 1 &&
+					(((card.HasFinish(mtgmatcher.FinishFoil) || card.HasFinish(mtgmatcher.FinishEtched)) && !foil) ||
+						(card.HasFinish(mtgmatcher.FinishNonfoil) && foil)) {
+					return &backup, errors.New("invalid number/foil combination")
+				}
+			} else {
+				return &backup, errors.New("invalid number/foil combination")
+			}
 		}
+
+		// Force Etched for specific sets that need extra decoupling
+		variant := ""
+		if strings.Contains(SKU, "-STA-") || strings.Contains(SKU, "-STA2-") ||
+			strings.Contains(SKU, "-MH2-") || strings.Contains(SKU, "-MH22-") || strings.Contains(SKU, "-MH23-") ||
+			strings.Contains(SKU, "-MH1-") || strings.Contains(SKU, "-MH12-") || strings.Contains(SKU, "-MH13-") {
+			isEtched := foil && (strings.Contains(SKU, "-STA2-") || strings.Contains(SKU, "-MH23-") || strings.Contains(SKU, "-MH13-"))
+
+			card.UUID, _ = mtgmatcher.MatchId(card.UUID, foil, isEtched)
+
+			if isEtched {
+				variant = "etched"
+			}
+		}
+
 		return &mtgmatcher.InputCard{
-			Id:       out[0].UUID,
-			Foil:     foil,
-			Language: language,
+			Id:        card.UUID,
+			Variation: variant,
+			Foil:      foil,
+			Language:  language,
 		}, nil
 	}
 	if len(out) > 1 {
@@ -237,9 +307,9 @@ func ProcessSKU(cardName, SKU string) (*mtgmatcher.InputCard, error) {
 		for _, id := range out {
 			alias.Dupes = append(alias.Dupes, id.UUID)
 		}
-		return nil, alias
+		return &backup, alias
 	}
-	return nil, errors.New("not found")
+	return &backup, errors.New("not found")
 }
 
 func preprocess(hit Hit) (*mtgmatcher.InputCard, error) {
@@ -297,7 +367,7 @@ func preprocess(hit Hit) (*mtgmatcher.InputCard, error) {
 		return nil, err
 	}
 
-	canProcessSKU := language == "en" || language == "English"
+	canProcessSKU := true
 	// We can't use the numbers reported because they match the plain version
 	// and the Match search doesn't upgrade these custom tags
 	switch {
@@ -310,11 +380,20 @@ func preprocess(hit Hit) (*mtgmatcher.InputCard, error) {
 	if canProcessSKU {
 		out, err := ProcessSKU(cardName, card.Sku)
 		if err == nil {
-			// We need to attach this field to take into account promotions
-			// like STA (nonfoil/foil/etched) with the same collector number
-			out.Variation = variant
 			return out, nil
 		}
+
+		// In case SKU processing failed, gather valid info as much as possible
+		_, err = mtgmatcher.GetSet(out.Edition)
+		if err == nil {
+			edition = out.Edition
+		}
+		_, err = strconv.Atoi(out.Variation)
+		if err == nil {
+			variant = out.Variation
+		}
+		foil = out.Foil
+		language = out.Language
 	}
 
 	switch edition {

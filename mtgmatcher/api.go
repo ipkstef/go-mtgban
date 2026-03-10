@@ -88,12 +88,8 @@ func GetSetByName(edition string, flags ...bool) (*Set, error) {
 	return nil, ErrCardNotInEdition
 }
 
-func Scryfall2UUID(id string) string {
-	return backend.Scryfall[id]
-}
-
-func Tcg2UUID(id string) string {
-	return backend.Tcgplayer[id]
+func ExternalUUID(id string) string {
+	return backend.ExternalIdentifiers[id]
 }
 
 func AllPromoTypes() []string {
@@ -160,19 +156,11 @@ func SearchHasPrefix(name string) ([]string, error) {
 	if name == "" {
 		return backend.AllUUIDs, nil
 	}
-	results, err := searchFunc(name, backend.AllNames, strings.HasPrefix)
-	if err != nil {
-		return searchFunc(name, backend.AlternateNames, strings.HasPrefix)
-	}
-	return results, nil
+	return searchFunc(name, backend.AllNames, strings.HasPrefix)
 }
 
 func SearchContains(name string) ([]string, error) {
-	results, err := searchFunc(name, backend.AllNames, strings.Contains)
-	if err != nil {
-		return searchFunc(name, backend.AlternateNames, strings.Contains)
-	}
-	return results, nil
+	return searchFunc(name, backend.AllNames, strings.Contains)
 }
 
 func SearchRegexp(name string) ([]string, error) {

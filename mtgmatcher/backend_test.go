@@ -2,14 +2,13 @@ package mtgmatcher
 
 import (
 	"math/rand"
-	"sort"
 	"testing"
 )
 
 var NameToBeFound string
 var ReturnWhenFound bool
 
-var SliceOfObj []cardinfo
+var SliceOfObj []string
 var SliceOfStr []string
 
 func setupBenchmark() {
@@ -23,20 +22,8 @@ func setupBenchmark() {
 		break
 	}
 
-	sliceOfObj := make([]cardinfo, 0, len(backend.CardInfo))
-	sliceOfStr := make([]string, 0, len(backend.CardInfo))
-	for _, card := range backend.CardInfo {
-		sliceOfObj = append(sliceOfObj, card)
-		sliceOfStr = append(sliceOfStr, Normalize(card.Name))
-	}
-	sort.Slice(sliceOfObj, func(i, j int) bool {
-		return sliceOfObj[i].Name > sliceOfObj[j].Name
-	})
-	sort.Slice(sliceOfStr, func(i, j int) bool {
-		return sliceOfStr[i] > sliceOfStr[j]
-	})
-	SliceOfObj = sliceOfObj
-	SliceOfStr = sliceOfStr
+	SliceOfObj = backend.AllCanonicalNames
+	SliceOfStr = backend.AllNames
 }
 
 func backendUUIDs(name string, doneWhenFound bool) (printings []string) {
@@ -63,35 +50,11 @@ func BenchmarkSearchWithUUIDs(b *testing.B) {
 	}
 }
 
-func backendInfo(name string, doneWhenFound bool) (printings []string) {
-	name = Normalize(name)
-	for key := range backend.CardInfo {
-		if key == name {
-			printings = backend.CardInfo[key].Printings
-			if doneWhenFound {
-				return
-			}
-		}
-	}
-	return
-}
-
-func BenchmarkSearchWithInfo(b *testing.B) {
-	if NameToBeFound == "" {
-		setupBenchmark()
-	}
-	b.ResetTimer()
-
-	for n := 0; n < b.N; n++ {
-		backendInfo(NameToBeFound, ReturnWhenFound)
-	}
-}
-
 func backendSlice(name string, doneWhenFound bool) (printings []string) {
 	name = Normalize(name)
 	for i := range SliceOfObj {
-		if Normalize(SliceOfObj[i].Name) == name {
-			printings = SliceOfObj[i].Printings
+		if Normalize(SliceOfObj[i]) == name {
+			printings, _ = Printings4Card(name)
 			if doneWhenFound {
 				return
 			}
@@ -115,7 +78,7 @@ func backendHybrid(name string, doneWhenFound bool) (printings []string) {
 	name = Normalize(name)
 	for i := range SliceOfStr {
 		if SliceOfStr[i] == name {
-			printings = backend.CardInfo[name].Printings
+			printings, _ = Printings4Card(name)
 			if doneWhenFound {
 				return
 			}

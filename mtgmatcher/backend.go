@@ -18,12 +18,6 @@ type DataStore interface {
 	Load() cardBackend
 }
 
-type cardinfo struct {
-	Name      string
-	Printings []string
-	Layout    string
-}
-
 // CardObject is an extension of Card, containing fields that cannot
 // be easily represented in the original object.
 type CardObject struct {
@@ -63,9 +57,9 @@ type cardBackend struct {
 	// Map of set code : Set
 	Sets map[string]*Set
 
-	// Map of normalized name : cardinfo
-	// Only the main canonical name is stored here
-	CardInfo map[string]cardinfo
+	// Map of normalized name : canonical name
+	// This is slightly different for tokens, as they are tagged as such
+	CanonicalNames map[string]string
 
 	// Map of uuid : CardObject
 	UUIDs map[string]CardObject
@@ -95,18 +89,13 @@ type cardBackend struct {
 	// Neither key nor values are normalized
 	AlternateProps map[string]alternateProps
 
-	// Slice with every uniquely normalized alternative name
-	AlternateNames []string
-
 	// Slice with every possible non-sealed uuid
 	AllUUIDs []string
 	// Slice with every possible sealed uuid
 	AllSealedUUIDs []string
 
-	// Scryfall UUID to MTGJSON UUID
-	Scryfall map[string]string
-	// TCG player Product ID to MTGJSON UUID
-	Tcgplayer map[string]string
+	// Non-MTGBAN UUID to a card (or product) UUID
+	ExternalIdentifiers map[string]string
 
 	// A list of keywords mapped to the full Commander set name
 	CommanderKeywordMap map[string]string
@@ -156,6 +145,147 @@ func skipSet(set *Set) bool {
 	return false
 }
 
+func generateUUIDsMap(sets map[string]*Set) (map[string]CardObject, []string, []string) {
+	uuids := map[string]CardObject{}
+	for _, set := range sets {
+		for _, card := range set.Cards {
+			generateCardUUIDs(card, uuids, set.Name)
+		}
+		for _, product := range set.SealedProduct {
+			generateSealedUUIDs(product, uuids, set.Name)
+		}
+	}
+	fillinSealedContents(sets, uuids)
+
+	// Separate all the uuids generated
+	var allUUIDs []string
+	var allSealedUUIDs []string
+	for uuid, co := range uuids {
+		if co.Sealed {
+			allSealedUUIDs = append(allSealedUUIDs, uuid)
+			continue
+		}
+		allUUIDs = append(allUUIDs, uuid)
+	}
+
+	// Keep slices sorted for more reproducible results
+	sort.Strings(allUUIDs)
+	sort.Strings(allSealedUUIDs)
+
+	return uuids, allUUIDs, allSealedUUIDs
+}
+
+// Append "_f" and "_e" to uuids, unless etched is the only printing.
+// If it's not etched, append "_f", unless foil is the only printing.
+// Leave uuids unchanged, if there is a single printing of any kind.
+func generateCardUUIDs(card Card, uuids map[string]CardObject, edition string) {
+	// Shared card object
+	co := CardObject{
+		Card:    card,
+		Edition: edition,
+	}
+
+	if card.HasFinish(FinishEtched) {
+		uuid := card.UUID
+
+		// Etched + Nonfoil [+ Foil]
+		if card.HasFinish(FinishNonfoil) {
+			// Save the card object
+			uuids[uuid] = co
+		}
+
+		// Etched + Foil
+		if card.HasFinish(FinishFoil) {
+			// Set the main property
+			co.Foil = true
+			// Make sure "_f" is appended if a different version exists
+			if card.HasFinish(FinishNonfoil) {
+				uuid = card.UUID + suffixFoil
+				co.UUID = uuid
+			}
+			// Save the card object
+			uuids[uuid] = co
+		}
+
+		// Etched
+		// Set the main properties
+		co.Foil = false
+		co.Etched = true
+		// If there are alternative finishes, always append the suffix
+		if card.HasFinish(FinishNonfoil) || card.HasFinish(FinishFoil) {
+			uuid = card.UUID + suffixEtched
+			co.UUID = uuid
+		}
+		// Save the card object
+		uuids[uuid] = co
+	} else if card.HasFinish(FinishFoil) {
+		uuid := card.UUID
+
+		// Foil [+ Nonfoil]
+		if card.HasFinish(FinishNonfoil) {
+			// Save the card object
+			uuids[uuid] = co
+
+			// Update the uuid for the *next* finish type
+			uuid = card.UUID + suffixFoil
+			co.UUID = uuid
+		}
+
+		// Foil
+		co.Foil = true
+		// Save the card object
+		uuids[uuid] = co
+	} else {
+		// Single printing, use as-is
+		uuids[card.UUID] = co
+	}
+}
+
+func generateSealedUUIDs(product SealedProduct, uuids map[string]CardObject, edition string) {
+	card := Card{
+		UUID:        product.UUID,
+		Name:        product.Name,
+		SetCode:     product.SetCode,
+		Identifiers: product.Identifiers,
+		Rarity:      "product",
+		Layout:      product.Category,
+		Side:        product.Subtype,
+		// Will be filled later
+		SourceProducts: map[string][]string{},
+		Images:         map[string]string{},
+	}
+
+	// Preserve ReleaseDate information only for SLD, the other sets
+	// will derive it from the set date itself
+	if product.SetCode == "SLD" {
+		card.OriginalReleaseDate = product.ReleaseDate
+	}
+
+	card.Images["full"] = generateImageURL(card, "normal")
+	card.Images["thumbnail"] = generateImageURL(card, "small")
+	card.Images["crop"] = generateImageURL(card, "normal")
+
+	isEtched := strings.Contains(product.Name, "Etched")
+	isFoil := !isEtched
+	switch {
+	case strings.Contains(product.Name, "Foil") && !strings.Contains(product.Name, "Non"):
+	case strings.Contains(product.Name, "Premium"):
+	case strings.Contains(product.Name, "VIP Edition"):
+	case strings.Contains(product.Name, "Commander Deck") && strings.Contains(product.Name, "Collector Edition"):
+	case slices.Contains(productsWithOnlyFoils, product.Name):
+	default:
+		isFoil = false
+	}
+
+	uuids[product.UUID] = CardObject{
+		Card:    card,
+		Sealed:  true,
+		Edition: edition,
+		Foil:    isFoil,
+		Etched:  isEtched,
+	}
+}
+
 func sortPrintings(sets map[string]*Set, printings []string) {
 	sort.Slice(printings, func(i, j int) bool {
 		setDateI, errI := time.Parse("2006-01-02", sets[printings[i]].ReleaseDate)
@@ -200,6 +330,12 @@ func generateImageURL(card Card, version string) string {
 	code = strings.TrimSuffix(code, "jpn")
 	code = strings.TrimSuffix(code, "alt")
 
+	// Override Token sets
+	tokenSetCode, found := card.Identifiers["tokenSetCode"]
+	if found {
+		code = tokenSetCode
+	}
+
 	// Pick the right language for duplicated cards
 	if strings.Contains(card.Number, "ita") || strings.Contains(card.Number, "jpn") {
 		number += "/" + LanguageTag2LanguageCode[card.Language]
@@ -220,25 +356,17 @@ func adjustTokens(sets map[string]*Set) {
 			continue
 		}
 
-		for _, cardSet := range [][]Card{set.Cards, set.Tokens} {
-			for i := range cardSet {
-				switch set.Code {
-				// Only keep dungeons, and fix their layout to make sure they are tokens
-				case "AFR":
-					if slices.Contains(cardSet[i].Types, "Dungeon") {
-						cardSet[i].Layout = "token"
-					}
+		for i := range set.Tokens {
+			// Reset various token types to correct properties
+			if slices.Contains(set.Tokens[i].Types, "Card") ||
+				slices.Contains(set.Tokens[i].Types, "Dungeon") ||
+				slices.Contains(set.Tokens[i].Types, "Emblem") ||
+				slices.Contains(set.Tokens[i].Types, "Token") {
+				set.Tokens[i].Layout = "token"
+				set.Tokens[i].Rarity = "token"
 
-				// Override all cards to tokens so that duplicates get named differently
-				case "TFTH", "TBTH", "TDAG":
-					cardSet[i].Layout = "token"
-				}
-
-				// Make sure any odd token type stays token
-				switch cardSet[i].Layout {
-				case "token", "double_faced_token", "emblem":
-					cardSet[i].Layout = "token"
-					cardSet[i].Rarity = "token"
+				if set.TokenSetCode != "" {
+					set.Tokens[i].Identifiers["tokenSetCode"] = set.TokenSetCode
 				}
 			}
 		}
@@ -246,41 +374,33 @@ func adjustTokens(sets map[string]*Set) {
 
 	// Load up all the printings found among tokens
 	for _, set := range sets {
-		for _, cardSet := range [][]Card{set.Cards, set.Tokens} {
-			for i := range cardSet {
-				if cardSet[i].Layout != "token" {
-					continue
-				}
-				if slices.Contains(printings[cardSet[i].Name], set.Code) {
-					continue
-				}
-				printings[cardSet[i].Name] = append(printings[cardSet[i].Name], set.Code)
+		for i := range set.Tokens {
+			if set.Tokens[i].Layout != "token" {
+				continue
 			}
+			if slices.Contains(printings[set.Tokens[i].Name], set.Code) {
+				continue
+			}
+			printings[set.Tokens[i].Name] = append(printings[set.Tokens[i].Name], set.Code)
 		}
 	}
 
 	// Assign printings to tokens
 	// Sorting will happen later
 	for _, set := range sets {
-		for _, cardSet := range [][]Card{set.Cards, set.Tokens} {
-			for i := range cardSet {
-				if cardSet[i].Layout != "token" {
-					continue
-				}
-				cardSet[i].Printings = printings[cardSet[i].Name]
+		for i := range set.Tokens {
+			if set.Tokens[i].Layout != "token" {
+				continue
 			}
+			set.Tokens[i].Printings = printings[set.Tokens[i].Name]
 		}
 	}
 }
 
 func (ap AllPrintings) Load() cardBackend {
-	uuids := map[string]CardObject{}
-	cardInfo := map[string]cardinfo{}
-	scryfall := map[string]string{}
-	tcgplayer := map[string]string{}
+	canonicalNames := map[string]string{}
 	alternates := map[string]alternateProps{}
 	commanderKeywordMap := map[string]string{}
-	var promoTypes []string
 	var allCardNames []string
 	var tokens []string
 	var allSets []string
@@ -404,12 +524,25 @@ func (ap AllPrintings) Load() cardBackend {
 					card.PromoTypes = append(card.PromoTypes, "tourney")
 					card.IsPromo = true
 
+				// The Shapeshift token with clashing name
+				// SDL is the only set enabled for this case
+				case "1906", "1907", "1908", "1909":
+					card.Name += " Token"
+
 				default:
 					num, _ := strconv.Atoi(card.Number)
 					// Override the frame type for the Braindead drops
-					if (num >= 821 && num <= 824) || (num >= 1652 && num <= 1666) {
+					if (num >= 821 && num <= 824) ||
+						(num >= 1652 && num <= 1666) ||
+						(num >= 2514 && num <= 2523) || num == 7108 {
 						card.FrameVersion = "2015"
 					}
+				}
+
+			// Clashing printing
+			case "TBTH":
+				if card.Name == "Unquenchable Fury" {
+					card.Name += " Token"
 				}
 
 			case "SLX":
@@ -418,6 +551,21 @@ func (ap AllPrintings) Load() cardBackend {
 				if num >= 24 && num <= 30 {
 					card.PromoTypes = append(card.PromoTypes, "wizardsplaynetwork")
 				}
+
+			case "CMB1", "CMB2":
+				// Rename cards that have names clashing with real cards
+				switch card.Name {
+				case "Pick Your Poison",
+					"Red Herring":
+					card.Name += " Playtest"
+				// This could mess up Bind (INV)
+				case "Bind // Liberate":
+					card.Name = "Bind // Liberate Playtest"
+					card.FaceName = "Bind Playtest"
+				}
+
+			case "TMC":
+				set.Name = "Teenage Mutant Ninja Turtles Commander"
 			}
 
 			// Make sure this property is correctly initialized
@@ -496,117 +644,48 @@ func (ap AllPrintings) Load() cardBackend {
 
 			card.Printings = printings
 
-			// Now assign the card to the list of cards to be saved
-			filteredCards = append(filteredCards, card)
-
-			// Quick dictionary of valid card names and their printings
-			name := card.Name
-
-			// Due to several cards having the same name of a token we hardcode
-			// this value to tell them apart in the future -- checks and names
-			// are still using the official Scryfall name (without the extra Token)
-			if card.Layout == "token" {
-				name += " Token"
-			}
-
-			// Deduplicate clashing names
-			if slices.Contains(duplicatedCardNames, name) && strings.Contains(set.Name, "Playtest") {
-				name += " Playtest"
-			}
-
-			norm := Normalize(name)
-			_, found := cardInfo[norm]
-			if !found {
-				cardInfo[norm] = cardinfo{
-					Name:      card.Name,
-					Printings: card.Printings,
-					Layout:    card.Layout,
-				}
-			}
-
 			// Custom properties for tokens
 			if card.IsOversized {
 				card.Rarity = "oversize"
 			}
 
-			// Initialize custom lookup tables
-			scryfallId, found := card.Identifiers["scryfallId"]
-			if found {
-				scryfall[scryfallId] = card.UUID
-			}
-
-			// Shared card object
-			co := CardObject{
-				Card:    card,
-				Edition: set.Name,
-			}
-
 			// Save the original uuid
-			co.Identifiers["mtgjsonId"] = card.UUID
+			card.Identifiers["mtgjsonId"] = card.UUID
 
-			// Append "_f" and "_e" to uuids, unless etched is the only printing.
-			// If it's not etched, append "_f", unless foil is the only printing.
-			// Leave uuids unchanged, if there is a single printing of any kind.
-			if card.HasFinish(FinishEtched) {
-				uuid := card.UUID
+			// Now assign the card to the list of cards to be saved
+			filteredCards = append(filteredCards, card)
 
-				// Etched + Nonfoil [+ Foil]
-				if card.HasFinish(FinishNonfoil) {
-					// Save the card object
-					uuids[uuid] = co
+			alternativeId, found := card.Identifiers["tcgplayerAlternativeFoilProductId"]
+			if found {
+				// Change properties of the current card
+				filteredCards[len(filteredCards)-1].Finishes = []string{"nonfoil"}
+				filteredCards[len(filteredCards)-1].Variations = []string{card.UUID + suffixFoil}
+
+				// Create new card
+				card.Variations = []string{card.UUID}
+				card.UUID += suffixFoil
+				card.Number += SuffixSpecial
+				card.Finishes = []string{"foil"}
+
+				// Clone the map and replace it, overriding the id
+				newIdentifiers := map[string]string{}
+				for k, v := range card.Identifiers {
+					newIdentifiers[k] = v
 				}
 
-				// Etched + Foil
-				if card.HasFinish(FinishFoil) {
-					// Set the main property
-					co.Foil = true
-					// Make sure "_f" is appended if a different version exists
-					if card.HasFinish(FinishNonfoil) {
-						uuid = card.UUID + suffixFoil
-						co.UUID = uuid
-					}
-					// Save the card object
-					uuids[uuid] = co
+				card.Identifiers = newIdentifiers
+				card.Identifiers["tcgplayerProductId"] = alternativeId
+				// Signal that the TCG SKUs from MTGJSON need to be refreshed
+				card.Identifiers["needsNewTCGSKUs"] = "true"
+
+				// In case we are duplicating a card that was *already* duplicated
+				_, found = card.Identifiers["originalScryfallNumber"]
+				if !found {
+					card.Identifiers["originalScryfallNumber"] = card.Number
 				}
 
-				// Etched
-				// Set the main properties
-				co.Foil = false
-				co.Etched = true
-				// If there are alternative finishes, always append the suffix
-				if card.HasFinish(FinishNonfoil) || card.HasFinish(FinishFoil) {
-					uuid = card.UUID + suffixEtched
-					co.UUID = uuid
-				}
-				// Save the card object
-				uuids[uuid] = co
-			} else if card.HasFinish(FinishFoil) {
-				uuid := card.UUID
-
-				// Foil [+ Nonfoil]
-				if card.HasFinish(FinishNonfoil) {
-					// Save the card object
-					uuids[uuid] = co
-
-					// Update the uuid for the *next* finish type
-					uuid = card.UUID + suffixFoil
-					co.UUID = uuid
-				}
-
-				// Foil
-				co.Foil = true
-				// Save the card object
-				uuids[uuid] = co
-			} else {
-				// Single printing, use as-is
-				uuids[card.UUID] = co
-			}
-
-			// Add to the ever growing list of promo types
-			for _, promoType := range card.PromoTypes {
-				if !slices.Contains(promoTypes, promoType) {
-					promoTypes = append(promoTypes, promoType)
-				}
+				// Append the new card
+				filteredCards = append(filteredCards, card)
 			}
 
 			// Add possible rarities and colors
@@ -717,31 +796,55 @@ func (ap AllPrintings) Load() cardBackend {
 		}
 	}
 
-	duplicate(ap.Data, cardInfo, uuids, "Legends Italian", "LEG", "ITA", "1995-09-01")
-	duplicate(ap.Data, cardInfo, uuids, "The Dark Italian", "DRK", "ITA", "1995-08-01")
-	duplicate(ap.Data, cardInfo, uuids, "Alternate Fourth Edition", "4ED", "ALT", "1995-04-01")
+	duplicate(ap.Data, "Legends Italian", "LEG", "ITA", "1995-09-01")
+	duplicate(ap.Data, "The Dark Italian", "DRK", "ITA", "1995-08-01")
+	duplicate(ap.Data, "Alternate Fourth Edition", "4ED", "ALT", "1995-04-01")
 	allSets = append(allSets, "LEGITA", "DRKITA", "4EDALT")
 
-	sldDupes := duplicateCards(ap.Data, uuids, "SLD", "JPN", sldJPNLangDupes)
+	sldDupes := duplicateCards(ap.Data, "SLD", "JPN", sldJPNLangDupes)
 	ap.Data["SLD"].Cards = append(ap.Data["SLD"].Cards, sldDupes...)
 
-	purlDupes := duplicateCards(ap.Data, uuids, "PURL", "JPN", []string{"1"})
+	purlDupes := duplicateCards(ap.Data, "PURL", "JPN", []string{"1"})
 	ap.Data["PURL"].Cards = append(ap.Data["PURL"].Cards, purlDupes...)
 
-	for setCode := range foilDupes {
-		spinoffFoils(ap.Data, uuids, setCode)
-	}
+	// Generate the unique identifiers for singles and products
+	uuids, allUUIDs, allSealedUUIDs := generateUUIDsMap(ap.Data)
+
+	// Remove promo tags that apply to a single finish only
+	filterInvalidPromoTypes(ap.Data, uuids)
 
 	// Add all names and associated uuids to the global names and hashes arrays
 	hashes := map[string][]string{}
 	var names, fullNames, lowerNames []string
 	var sealed, fullSealed, lowerSealed []string
-	for uuid, card := range uuids {
-		// Load up the ids, both the ones in mtgjson and the ones loaded manually
-		for _, tag := range []string{"tcgplayerProductId", "tcgplayerEtchedProductId"} {
-			tcgplayerId, found := card.Identifiers[tag]
+	var promoTypes []string
+	externalIds := map[string]string{}
+	for _, uuid := range append(allUUIDs, allSealedUUIDs...) {
+		card := uuids[uuid]
+
+		// Load up the any external id
+		for _, tag := range []string{
+			"mtgjsonId",
+			"scryfallId",
+			"tcgplayerProductId",
+			"tcgplayerEtchedProductId",
+		} {
+			id, found := card.Identifiers[tag]
+			if !found {
+				continue
+			}
+			// Skip if already loaded
+			_, found = externalIds[id]
 			if found {
-				tcgplayer[tcgplayerId] = card.Identifiers["mtgjsonId"]
+				continue
+			}
+			externalIds[id] = card.UUID
+		}
+
+		// Add to the ever growing list of promo types
+		for _, promoType := range card.PromoTypes {
+			if !slices.Contains(promoTypes, promoType) {
+				promoTypes = append(promoTypes, promoType)
 			}
 		}
 
@@ -753,6 +856,15 @@ func (ap AllPrintings) Load() cardBackend {
 			}
 			if card.PrintedName != "" && !slices.Contains(namesToAdd, card.PrintedName+" // "+card.PrintedName) {
 				namesToAdd = append(namesToAdd, card.PrintedName+" // "+card.PrintedName)
+			}
+		} else {
+			for _, name := range []string{
+				card.FaceName, card.FlavorName, card.FaceFlavorName, card.PrintedName, card.FacePrintedName,
+			} {
+				if name == "" {
+					continue
+				}
+				namesToAdd = append(namesToAdd, name)
 			}
 		}
 
@@ -770,90 +882,21 @@ func (ap AllPrintings) Load() cardBackend {
 					lowerNames = append(lowerNames, strings.ToLower(nameToAdd))
 				}
 			}
+			if slices.Contains(hashes[norm], uuid) {
+				continue
+			}
 			hashes[norm] = append(hashes[norm], uuid)
 		}
-	}
-	// Add all alternative names too
-	var altNames []string
-	for altName, altProps := range alternates {
-		altNorm := Normalize(altName)
-		_, found := hashes[altNorm]
-		if !found {
-			altNames = append(altNames, altNorm)
-			fullNames = append(fullNames, altName)
-			lowerNames = append(lowerNames, strings.ToLower(altName))
-		}
-		if altProps.IsFlavor {
-			// Retrieve all the uuids with a FlavorName attached
-			allAltUUIDs := hashes[Normalize(altProps.OriginalName)]
-			for _, uuid := range allAltUUIDs {
-				for _, name := range []string{
-					uuids[uuid].FlavorName, uuids[uuid].PrintedName, uuids[uuid].FacePrintedName,
-				} {
-					if name == "" || slices.Contains(hashes[altNorm], uuid) {
-						continue
-					}
-					if Normalize(name) == altNorm || Normalize(strings.Split(name, " // ")[0]) == altNorm {
-						hashes[altNorm] = append(hashes[altNorm], uuid)
-					}
-				}
-			}
-		} else {
-			// Copy the original uuids, avoiding duplicates for the cards already added
-			for _, hash := range hashes[Normalize(altProps.OriginalName)] {
-				if slices.Contains(hashes[altNorm], hash) {
-					continue
-				}
-				hashes[altNorm] = append(hashes[altNorm], hash)
-			}
-		}
-	}
 
-	// Finally save all the  uuids generated
-	var allUUIDs []string
-	var allSealedUUIDs []string
-	for uuid, co := range uuids {
-		if co.Sealed {
-			allSealedUUIDs = append(allSealedUUIDs, uuid)
-			continue
+		// Due to several cards having the same name of a token we hardcode
+		// this value to tell them apart in the future -- checks and names
+		// are still using the official Scryfall name (without the extra Token)
+		norm := Normalize(card.Name)
+		if card.Layout == "token" && !strings.Contains(card.Name, "Token") {
+			norm += "token"
 		}
-		allUUIDs = append(allUUIDs, uuid)
-	}
 
-	// Remove promo tags that apply to a single finish only
-	for uuid, card := range uuids {
-		if !card.Foil && !card.Etched && !card.Sealed {
-			for _, promoType := range []string{
-				PromoTypeDoubleExposure,
-				PromoTypeGalaxyFoil,
-				PromoTypeSilverFoil,
-				PromoTypeRainbowFoil,
-				PromoTypeRippleFoil,
-				PromoTypeSurgeFoil,
-			} {
-				if card.HasPromoType(promoType) {
-					// Filter
-					var filtered []string
-					for _, pt := range card.PromoTypes {
-						if pt != promoType {
-							filtered = append(filtered, pt)
-						}
-					}
-
-					// Update UUID map
-					card.PromoTypes = filtered
-					uuids[uuid] = card
-
-					// Also update data in the original slice
-					for i, c := range ap.Data[card.SetCode].Cards {
-						if c.UUID != uuid {
-							continue
-						}
-						ap.Data[card.SetCode].Cards[i].PromoTypes = filtered
-					}
-				}
-			}
-		}
+		canonicalNames[norm] = card.Name
 	}
 
 	sort.Strings(promoTypes)
@@ -865,8 +908,6 @@ func (ap AllPrintings) Load() cardBackend {
 	sort.Strings(sealed)
 	sort.Strings(fullSealed)
 	sort.Strings(lowerSealed)
-
-	fillinSealedContents(ap.Data, uuids)
 
 	var backend cardBackend
 
@@ -884,13 +925,11 @@ func (ap AllPrintings) Load() cardBackend {
 	backend.AllLowerSealed = lowerSealed
 
 	backend.Sets = ap.Data
-	backend.CardInfo = cardInfo
+	backend.CanonicalNames = canonicalNames
 	backend.Tokens = tokens
 	backend.UUIDs = uuids
-	backend.Scryfall = scryfall
-	backend.Tcgplayer = tcgplayer
+	backend.ExternalIdentifiers = externalIds
 	backend.AlternateProps = alternates
-	backend.AlternateNames = altNames
 	backend.AllPromoTypes = promoTypes
 
 	backend.CommanderKeywordMap = commanderKeywordMap
@@ -984,6 +1023,44 @@ func fillinSealedContents(sets map[string]*Set, uuids map[string]CardObject) {
 	}
 }
 
+// Remove promo tags that apply to a single finish only
+func filterInvalidPromoTypes(sets map[string]*Set, uuids map[string]CardObject) {
+	for uuid, card := range uuids {
+		if !card.Foil && !card.Etched && !card.Sealed {
+			for _, promoType := range []string{
+				PromoTypeDoubleExposure,
+				PromoTypeGalaxyFoil,
+				PromoTypeSilverFoil,
+				PromoTypeRainbowFoil,
+				PromoTypeRippleFoil,
+				PromoTypeSurgeFoil,
+			} {
+				if card.HasPromoType(promoType) {
+					// Filter
+					var filtered []string
+					for _, pt := range card.PromoTypes {
+						if pt != promoType {
+							filtered = append(filtered, pt)
+						}
+					}
+
+					// Update UUID map
+					card.PromoTypes = filtered
+					uuids[uuid] = card
+
+					// Also update data in the original slice
+					for i, c := range sets[card.SetCode].Cards {
+						if c.UUID != uuid {
+							continue
+						}
+						sets[card.SetCode].Cards[i].PromoTypes = filtered
+					}
+				}
+			}
+		}
+	}
+}
+
 // Match the name of the deck with the product UUID(s)
 func findDeck(setCode, deckName string) []string {
 	var list []string
@@ -1049,7 +1126,7 @@ var langs = map[string]string{
 }
 
 // Duplicate an entire set of cards, using a custom code and a different language
-func duplicate(sets map[string]*Set, cardInfo map[string]cardinfo, uuids map[string]CardObject, name, code, tag, date string) {
+func duplicate(sets map[string]*Set, name, code, tag, date string) {
 	// Copy base set information
 	dup := *sets[code]
 
@@ -1062,7 +1139,7 @@ func duplicate(sets map[string]*Set, cardInfo map[string]cardinfo, uuids map[str
 	// Target slice for later use
 	var numbers []string
 
-	// Rework printings information and update cardInfo
+	// Rework printings information
 	for i := range sets[code].Cards {
 		// Skip misprints from main sets
 		if strings.HasSuffix(sets[code].Cards[i].Number, SuffixVariant) {
@@ -1097,11 +1174,6 @@ func duplicate(sets map[string]*Set, cardInfo map[string]cardinfo, uuids map[str
 			}
 		}
 
-		// Update printings for the CardInfo map
-		ci := cardInfo[Normalize(sets[code].Cards[i].Name)]
-		ci.Printings = printings
-		cardInfo[Normalize(sets[code].Cards[i].Name)] = ci
-
 		numbers = append(numbers, sets[code].Cards[i].Number)
 	}
 
@@ -1109,7 +1181,7 @@ func duplicate(sets map[string]*Set, cardInfo map[string]cardinfo, uuids map[str
 	sets[dup.Code] = &dup
 
 	// Duplicate cards
-	dup.Cards = duplicateCards(sets, uuids, code, tag, numbers)
+	dup.Cards = duplicateCards(sets, code, tag, numbers)
 
 	// Remove store references to avoid duplicates
 	for i := range dup.Cards {
@@ -1126,7 +1198,7 @@ func duplicate(sets map[string]*Set, cardInfo map[string]cardinfo, uuids map[str
 }
 
 // Duplicate certain cards within the same set according to the language tag
-func duplicateCards(sets map[string]*Set, uuids map[string]CardObject, code, tag string, numbers []string) []Card {
+func duplicateCards(sets map[string]*Set, code, tag string, numbers []string) []Card {
 	var duplicates []Card
 
 	for i := range sets[code].Cards {
@@ -1146,10 +1218,8 @@ func duplicateCards(sets map[string]*Set, uuids map[string]CardObject, code, tag
 
 		// Set a new code and edition name if we're duplicating a whole set
 		_, found := sets[code+tag]
-		edition := sets[code].Name
 		if found {
 			dupeCard.SetCode = code + tag
-			edition = sets[dupeCard.SetCode].Name
 		}
 
 		// Update images
@@ -1168,23 +1238,6 @@ func duplicateCards(sets map[string]*Set, uuids map[string]CardObject, code, tag
 		}
 
 		duplicates = append(duplicates, dupeCard)
-
-		// Add the new uuid to the UUID map
-		for _, suffixTag := range []string{suffixEtched, suffixFoil, ""} {
-			uuid := mainUUID + suffixTag
-			co, found := uuids[uuid]
-			if !found {
-				continue
-			}
-
-			dupeCard.UUID = mainUUID + "_" + strings.ToLower(tag) + suffixTag
-			uuids[dupeCard.UUID] = CardObject{
-				Card:    dupeCard,
-				Edition: edition,
-				Etched:  co.Etched,
-				Foil:    co.Foil,
-			}
-		}
 	}
 
 	return duplicates

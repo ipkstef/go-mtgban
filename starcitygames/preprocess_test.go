@@ -87,6 +87,21 @@ var SKUTests = []SKUTest{
 		In:   "SGL-MTG-PRM-CF_2025_002-ENF1",
 		Out:  "7618d60e-3790-5e8f-bd44-3154001bf975",
 	},
+	{
+		Name: "Ponder",
+		In:   "SGL-MTG-PRM-SECRET_SLD_019-ENF1",
+		Out:  "d25135dd-3a0b-5b7f-b23b-79b483324759",
+	},
+	{
+		Name: "Ephemerate",
+		In:   "SGL-MTG-PRM-SECRET_SLD_1990-ENF1",
+		Out:  "5c67ed18-02b5-597a-a78f-fe7cb154b819_f",
+	},
+	{
+		Name: "Agonizing Remorse",
+		In:   "SGL-MTG-STA2-087-JAF1",
+		Out:  "d50b8669-352c-58d9-8cb4-6352e1f0a5ee_e",
+	},
 }
 
 func TestSCGSKU(t *testing.T) {

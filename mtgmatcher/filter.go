@@ -762,9 +762,9 @@ func filterPrintings(inCard *InputCard, editions []string) (printings []string) 
 
 		// Tokens need correct set names or special handling earlier
 		case (strings.HasSuffix(inCard.Name, "Token") &&
-			backend.CardInfo[Normalize(inCard.Name)].Layout == "token") ||
+			backend.UUIDs[backend.Hashes[Normalize(inCard.Name)][0]].Layout == "token") ||
 			(!strings.HasSuffix(inCard.Name, "Token") &&
-				backend.CardInfo[Normalize(inCard.Name+" Token")].Layout == "token"):
+				backend.UUIDs[backend.Hashes[Normalize(inCard.Name)][0]].Layout == "token"):
 			if !Equals(inCard.Edition, set.Name) {
 				continue
 			}
@@ -818,6 +818,13 @@ func filterCards(inCard *InputCard, cardSet map[string][]Card) (outCards []Card)
 					overrides := numFilterFunc(inCard)
 					if overrides != nil {
 						possibleSuffixes = overrides
+					}
+				} else if card.Identifiers["tcgplayerAlternativeFoilProductId"] != "" {
+					// Special case when we deal with duplicated entries
+					if inCard.Foil || inCard.isFoil() {
+						possibleSuffixes = []string{SuffixSpecial}
+					} else {
+						possibleSuffixes = []string{""}
 					}
 				}
 
