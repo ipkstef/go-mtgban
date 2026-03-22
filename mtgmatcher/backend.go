@@ -302,6 +302,23 @@ func sortPrintings(sets map[string]*Set, printings []string) {
 	})
 }
 
+// Sort sealed products within a single set in alphabetical order
+func sortSourceProducts(sets map[string]*Set, setCode string, sources []string) {
+	set, found := sets[setCode]
+	if !found {
+		return
+	}
+
+	nameByUUID := make(map[string]string, len(set.SealedProduct))
+	for _, product := range set.SealedProduct {
+		nameByUUID[product.UUID] = product.Name
+	}
+
+	sort.Slice(sources, func(i, j int) bool {
+		return nameByUUID[sources[i]] < nameByUUID[sources[j]]
+	})
+}
+
 func generateImageURL(card Card, version string) string {
 	_, found := card.Identifiers["scryfallId"]
 	if !found {
@@ -488,7 +505,7 @@ func (ap AllPrintings) Load() cardBackend {
 			case "DFT":
 				num, _ := strconv.Atoi(card.Number)
 				if num >= 333 && num <= 346 || num >= 532 && num <= 545 {
-					card.PromoTypes = append(card.PromoTypes, "rudedrivers")
+					card.PromoTypes = append(card.PromoTypes, "ruderiders")
 				}
 
 			// Upstream cannot properly represent foil cards
@@ -643,6 +660,18 @@ func (ap AllPrintings) Load() cardBackend {
 			sortPrintings(ap.Data, printings)
 
 			card.Printings = printings
+
+			// Filter out unneeded sources and sort them alphabetically
+			for finish, sources := range card.SourceProducts {
+				var filtered []string
+				for _, source := range sources {
+					if isBaseSealed(ap.Data, set.Code, source) {
+						filtered = append(filtered, source)
+					}
+				}
+				sortSourceProducts(ap.Data, set.Code, filtered)
+				card.SourceProducts[finish] = filtered
+			}
 
 			// Custom properties for tokens
 			if card.IsOversized {
@@ -941,10 +970,11 @@ func fillinSealedContents(sets map[string]*Set, uuids map[string]CardObject) {
 	result := map[string][]string{}
 	tmp := map[string][]string{}
 
+	// Figure out which sealed products contain a given sealed item
 	for _, set := range sets {
 		for _, product := range set.SealedProduct {
 			dedup := map[string]int{}
-			list := SealedWithinSealed(set.Code, product.UUID)
+			list := sealedWithinSealed(product)
 			for _, item := range list {
 				dedup[item]++
 			}
@@ -954,7 +984,7 @@ func fillinSealedContents(sets map[string]*Set, uuids map[string]CardObject) {
 		}
 	}
 
-	// Reverse to be compatible with SourceProducts model
+	// Reverse to be compatible with SourceProducts model (child->parent map)
 	for _, list := range tmp {
 		for _, item := range list {
 			for key, sublist := range tmp {
@@ -966,6 +996,7 @@ func fillinSealedContents(sets map[string]*Set, uuids map[string]CardObject) {
 		}
 	}
 
+	// Write back the result
 	for uuid, co := range uuids {
 		if !co.Sealed {
 			continue
@@ -975,6 +1006,8 @@ func fillinSealedContents(sets map[string]*Set, uuids map[string]CardObject) {
 		if !found {
 			continue
 		}
+
+		sortSourceProducts(sets, co.SetCode, res)
 
 		uuids[uuid].SourceProducts["sealed"] = res
 	}
@@ -1039,12 +1072,34 @@ func findDeck(setCode, deckName string) []string {
 
 // Return a list of sealed products contained by the input product
 // Decks and Packs and Card cannot contain other sealed product, so they are ignored here
-func SealedWithinSealed(setCode, sealedUUID string) []string {
+func sealedWithinSealed(product SealedProduct) []string {
 	var list []string
 
-	set, found := backend.Sets[setCode]
+	for key, contents := range product.Contents {
+		for _, content := range contents {
+			switch key {
+			case "sealed":
+				list = append(list, content.UUID)
+
+			case "variable":
+				for _, config := range content.Configs {
+					for _, sealed := range config["sealed"] {
+						list = append(list, sealed.UUID)
+					}
+				}
+			}
+		}
+	}
+
+	return list
+}
+
+// Check if the sealed product contains a base product, i.e. if there is at least
+// one component that doesn't need additional extraction
+func isBaseSealed(sets map[string]*Set, setCode, sealedUUID string) bool {
+	set, found := sets[setCode]
 	if !found {
-		return nil
+		return false
 	}
 
 	for _, product := range set.SealedProduct {
@@ -1055,17 +1110,15 @@ func SealedWithinSealed(setCode, sealedUUID string) []string {
 		for key, contents := range product.Contents {
 			for _, content := range contents {
 				switch key {
-				case "sealed":
-					list = append(list, content.UUID)
+				case "card", "deck", "pack":
+					return true
 
 				case "variable":
 					for _, config := range content.Configs {
-						for _, sealed := range config["sealed"] {
-							list = append(list, sealed.UUID)
-						}
-						for _, deck := range config["deck"] {
-							decklist := findDeck(deck.Set, deck.Name)
-							list = append(list, decklist...)
+						if config["card"] != nil ||
+							config["deck"] != nil ||
+							config["pack"] != nil {
+							return true
 						}
 					}
 				}
@@ -1073,7 +1126,7 @@ func SealedWithinSealed(setCode, sealedUUID string) []string {
 		}
 	}
 
-	return list
+	return false
 }
 
 var langs = map[string]string{
