@@ -67,28 +67,6 @@ jobs:
           mkdir -p "${{ inputs.path }}"
           curl -L "${{ inputs.url }}" -o "${{ steps.get_etag.outputs.filepath }}"
 
-      - if: steps.cache_file.outputs.cache-hit != 'true' && inputs.game != ''
-        name: Upload to B2
-        env:
-          B2KEY: "${{ secrets.B2_KEY_ID_DATASTORE }}"
-          B2SECRET: "${{ secrets.B2_APP_KEY_DATASTORE }}"
-        run: |
-          pipx install b2
-          b2 account authorize $B2KEY $B2SECRET
-          b2 sync --skip-newer "${{ inputs.path }}" "b2://mtgban-datastore/${{ inputs.game }}"
-          b2 account clear
-
-      - if: steps.cache_file.outputs.cache-hit != 'true' && inputs.game != ''
-        name: Ping server
-        env:
-          BAN_SECRET: "${{ secrets.BAN_SECRET }}"
-        run: |
-          ts=$(date -u +%s)
-          body=$(jq -n --arg ts "$ts" '{ts:($ts|tonumber)}')
-          sig=$(printf '%s' "$body" | openssl dgst -sha256 -hmac "$BAN_SECRET" -binary | base64)
-          curl -L -X POST \
-              -H 'Content-Type: application/json' \
-              -H "X-Signature: $sig" \
-              -H "X-Timestamp: $ts" \
-              --data-raw "$body" \
-              "https://${{ inputs.game }}.mtgban.com/api/load/datastore" 2> /dev/null | tee /dev/stderr | jq -e 'select(.status=="ok")'
+      # Omit B2 upload and production ping (upstream cache-file.yml): those steps require
+      # org secrets (B2_*, BAN_SECRET). Forks and local CI do not have them; b2 then prompts
+      # and fails with EOFError, breaking every scheduled bantool workflow that passes game=.
