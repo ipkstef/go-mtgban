@@ -4,7 +4,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"time"
 )
 
 // Remove any unrelated edition from the input array.
@@ -15,12 +14,12 @@ func filterPrintings(inCard *InputCard, editions []string) (printings []string) 
 	}
 
 	for _, setCode := range editions {
-		set, found := backend.Sets[setCode]
+		set, found := defaultBackend.Sets[setCode]
 		if !found {
 			continue
 		}
 
-		setDate, _ := time.Parse("2006-01-02", set.ReleaseDate)
+		setDate := set.ReleaseDateTime
 
 		switch {
 		// If the edition matches, use it as is
@@ -210,7 +209,7 @@ func filterPrintings(inCard *InputCard, editions []string) (printings []string) 
 				}
 				if inCard.isSecretLair() {
 					skip := true
-					for _, name := range backend.SLDDeckNames {
+					for _, name := range defaultBackend.SLDDeckNames {
 						if Contains(inCard.Edition, name) || Contains(inCard.Variation, name) {
 							skip = false
 						}
@@ -249,7 +248,7 @@ func filterPrintings(inCard *InputCard, editions []string) (printings []string) 
 				// Check that the card reported is not coming from a SLD Deck
 				// or if it does, make sure it is actually from SLD
 				if len(MatchInSetNumber(inCard.Name, "SLD", ExtractNumber(inCard.Variation))) == 0 && len(MatchInSet(inCard.Name, "PLST")) > 0 {
-					for _, name := range backend.SLDDeckNames {
+					for _, name := range defaultBackend.SLDDeckNames {
 						deckNameInCard := Contains(inCard.Edition, name) || Contains(inCard.Variation, name)
 						if deckNameInCard {
 							skip = true
@@ -762,9 +761,9 @@ func filterPrintings(inCard *InputCard, editions []string) (printings []string) 
 
 		// Tokens need correct set names or special handling earlier
 		case (strings.HasSuffix(inCard.Name, "Token") &&
-			backend.UUIDs[backend.Hashes[Normalize(inCard.Name)][0]].Layout == "token") ||
+			defaultBackend.UUIDs[defaultBackend.Hashes[Normalize(inCard.Name)][0]].Layout == "token") ||
 			(!strings.HasSuffix(inCard.Name, "Token") &&
-				backend.UUIDs[backend.Hashes[Normalize(inCard.Name)][0]].Layout == "token"):
+				defaultBackend.UUIDs[defaultBackend.Hashes[Normalize(inCard.Name)][0]].Layout == "token"):
 			if !Equals(inCard.Edition, set.Name) {
 				continue
 			}
@@ -779,7 +778,7 @@ func filterPrintings(inCard *InputCard, editions []string) (printings []string) 
 // Deduplicate cards with the same name.
 func filterCards(inCard *InputCard, cardSet map[string][]Card) (outCards []Card) {
 	for setCode, inCards := range cardSet {
-		set := backend.Sets[setCode]
+		set := defaultBackend.Sets[setCode]
 
 		for _, card := range inCards {
 			// Super lucky case, we were expecting the card
@@ -896,11 +895,11 @@ func filterCards(inCard *InputCard, cardSet map[string][]Card) (outCards []Card)
 	if len(outCards) > 1 {
 		var filteredOutCards []Card
 		for _, card := range outCards {
-			set, found := backend.Sets[card.SetCode]
+			set, found := defaultBackend.Sets[card.SetCode]
 			if !found {
 				continue
 			}
-			setDate, _ := time.Parse("2006-01-02", set.ReleaseDate)
+			setDate := set.ReleaseDateTime
 
 			var shouldContinue bool
 			for _, promoElement := range promoTypeElements {
@@ -1009,7 +1008,7 @@ func filterCards(inCard *InputCard, cardSet map[string][]Card) (outCards []Card)
 			logger.Println("allSameEdition pass needed")
 			var filteredOutCards []Card
 			for _, card := range outCards {
-				set := backend.Sets[card.SetCode]
+				set := defaultBackend.Sets[card.SetCode]
 				// The year is necessary to decouple PM20 and PM21 cards
 				year := ExtractYear(set.Name)
 				// Check if the parent set code is present in the variation or edition
@@ -1038,11 +1037,11 @@ func filterCards(inCard *InputCard, cardSet map[string][]Card) (outCards []Card)
 		if len(outCards) > 1 {
 			var filteredOutCards []Card
 			for _, card := range outCards {
-				set, found := backend.Sets[card.SetCode]
+				set, found := defaultBackend.Sets[card.SetCode]
 				if !found {
 					continue
 				}
-				setDate, _ := time.Parse("2006-01-02", set.ReleaseDate)
+				setDate := set.ReleaseDateTime
 				if setDate.After(SeparateFinishCollectorNumberDate) && etchedCheck(inCard, &card) {
 					continue
 				}
@@ -1079,11 +1078,11 @@ func filterCards(inCard *InputCard, cardSet map[string][]Card) (outCards []Card)
 			for _, card := range outCards {
 				// This needs date check because some old full art promos are marked
 				// as extended art, in a different way of what modern Extended Art is
-				set, found := backend.Sets[card.SetCode]
+				set, found := defaultBackend.Sets[card.SetCode]
 				if !found {
 					continue
 				}
-				setDate, _ := time.Parse("2006-01-02", set.ReleaseDate)
+				setDate := set.ReleaseDateTime
 				if setDate.After(PromosForEverybodyYay) && extendedartCheck(inCard, &card) {
 					continue
 				}

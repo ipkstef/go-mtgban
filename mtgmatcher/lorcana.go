@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type LorcanaJSON struct {
@@ -36,6 +37,7 @@ type LorcanaJSON struct {
 		ArtistsText      string            `json:"artistsText"`
 		Code             string            `json:"code"`
 		Color            string            `json:"color"`
+		Colors           []string          `json:"colors"`
 		Cost             int               `json:"cost"`
 		FlavorText       string            `json:"flavorText,omitempty"`
 		FoilTypes        []string          `json:"foilTypes,omitempty"`
@@ -88,37 +90,39 @@ func LoadLorcana(r io.Reader) (DataStore, error) {
 }
 
 func (lj LorcanaJSON) Load() cardBackend {
-	var backend cardBackend
+	var b cardBackend
 
-	backend.UUIDs = map[string]CardObject{}
-	backend.Hashes = map[string][]string{}
-	backend.ExternalIdentifiers = map[string]string{}
+	b.UUIDs = map[string]CardObject{}
+	b.Hashes = map[string][]string{}
+	b.ExternalIdentifiers = map[string]string{}
 
 	// Load all sets first
-	backend.Sets = map[string]*Set{}
+	b.Sets = map[string]*Set{}
 	for code, set := range lj.Sets {
-		backend.AllSets = append(backend.AllSets, code)
+		b.AllSets = append(b.AllSets, code)
 
-		backend.Sets[code] = &Set{
-			Name:        set.Name,
-			Code:        code,
-			ReleaseDate: set.ReleaseDate,
-			Type:        set.Type,
+		releaseDateTime, _ := time.Parse("2006-01-02", set.ReleaseDate)
+		b.Sets[code] = &Set{
+			Name:            set.Name,
+			Code:            code,
+			ReleaseDate:     set.ReleaseDate,
+			ReleaseDateTime: releaseDateTime,
+			Type:            set.Type,
 		}
 	}
 
 	// Load all card names
 	for _, card := range lj.Cards {
-		if slices.Contains(backend.AllCanonicalNames, card.FullName) {
+		if slices.Contains(b.AllCanonicalNames, card.FullName) {
 			continue
 		}
-		backend.AllNames = append(backend.AllNames, Normalize(card.FullName))
-		backend.AllCanonicalNames = append(backend.AllCanonicalNames, card.FullName)
-		backend.AllLowerNames = append(backend.AllLowerNames, card.FullName)
+		b.AllNames = append(b.AllNames, Normalize(card.FullName))
+		b.AllCanonicalNames = append(b.AllCanonicalNames, card.FullName)
+		b.AllLowerNames = append(b.AllLowerNames, card.FullName)
 	}
-	sort.Strings(backend.AllNames)
-	sort.Strings(backend.AllCanonicalNames)
-	sort.Strings(backend.AllLowerNames)
+	sort.Strings(b.AllNames)
+	sort.Strings(b.AllCanonicalNames)
+	sort.Strings(b.AllLowerNames)
 
 	// Load all cards and store them in their relative sets
 	for _, card := range lj.Cards {
@@ -137,6 +141,16 @@ func (lj LorcanaJSON) Load() cardBackend {
 		// Ensure no spaces are present for ease of future comparisons
 		rarity := strings.Replace(strings.ToLower(card.Rarity), " ", "", -1)
 
+		// Collapse multi and single color info to the same slice, lower case color names
+		ogColors := card.Colors
+		if len(ogColors) == 0 {
+			ogColors = []string{card.Color}
+		}
+		var colors []string
+		for _, color := range ogColors {
+			colors = append(colors, strings.ToLower(color))
+		}
+
 		// Prepare the card and add it to the main array
 		// Since cards are already sorted (by number/id), the order here is preserved
 		convertedCard := Card{
@@ -148,7 +162,7 @@ func (lj LorcanaJSON) Load() cardBackend {
 			Number:   fmt.Sprintf("%d%s", card.Number, card.Variant),
 			Images:   card.Images,
 
-			Colors: []string{strings.ToLower(card.Color)},
+			Colors: colors,
 			Rarity: rarity,
 
 			Subtypes:   card.Subtypes,
@@ -162,15 +176,15 @@ func (lj LorcanaJSON) Load() cardBackend {
 				"tcgplayerProductId": fmt.Sprint(card.ExternalLinks.TcgPlayerId),
 			},
 		}
-		backend.Sets[card.SetCode].Cards = append(backend.Sets[card.SetCode].Cards, convertedCard)
+		b.Sets[card.SetCode].Cards = append(b.Sets[card.SetCode].Cards, convertedCard)
 
-		backend.ExternalIdentifiers[fmt.Sprint(card.ExternalLinks.TcgPlayerId)] = convertedCard.UUID
+		b.ExternalIdentifiers[fmt.Sprint(card.ExternalLinks.TcgPlayerId)] = convertedCard.UUID
 
 		// Split cards per finish
 		for i, finish := range finishes {
 			co := CardObject{
 				Card:    convertedCard,
-				Edition: backend.Sets[card.SetCode].Name,
+				Edition: b.Sets[card.SetCode].Name,
 			}
 
 			// The main/first version keeps the same uuid of the card in the Cards array
@@ -184,49 +198,58 @@ func (lj LorcanaJSON) Load() cardBackend {
 
 			// Update uuid and store
 			co.UUID = uuid
-			backend.UUIDs[uuid] = co
+			b.UUIDs[uuid] = co
 
 			// Save uuid in the array of uuids and
-			backend.AllUUIDs = append(backend.AllUUIDs, uuid)
-			backend.Hashes[Normalize(card.FullName)] = append(backend.Hashes[Normalize(card.FullName)], uuid)
+			b.AllUUIDs = append(b.AllUUIDs, uuid)
+			b.Hashes[Normalize(card.FullName)] = append(b.Hashes[Normalize(card.FullName)], uuid)
 		}
 	}
 
 	// Update any remaining details on Sets after Cards loading
-	for code := range backend.Sets {
+	for code := range b.Sets {
 		var rarities, colors []string
-		backend.Sets[code].IsFoilOnly = true
-		backend.Sets[code].IsNonFoilOnly = true
-		for _, card := range backend.Sets[code].Cards {
-			if backend.Sets[code].BaseSetSize == 0 && card.Rarity == "enchanted" {
-				backend.Sets[code].BaseSetSize, _ = strconv.Atoi(card.Number)
+		b.Sets[code].IsFoilOnly = true
+		b.Sets[code].IsNonFoilOnly = true
+		for _, card := range b.Sets[code].Cards {
+			if b.Sets[code].BaseSetSize == 0 && card.Rarity == "enchanted" {
+				b.Sets[code].BaseSetSize, _ = strconv.Atoi(card.Number)
 			}
 
 			if card.HasFinish("nonfoil") {
-				backend.Sets[code].IsNonFoilOnly = false
+				b.Sets[code].IsNonFoilOnly = false
 			}
 			if !card.HasFinish("nonfoil") {
-				backend.Sets[code].IsFoilOnly = false
+				b.Sets[code].IsFoilOnly = false
 			}
 
 			if !slices.Contains(rarities, card.Rarity) {
 				rarities = append(rarities, card.Rarity)
 			}
-			if len(card.Colors) > 0 && !slices.Contains(colors, card.Colors[0]) {
-				colors = append(colors, card.Colors[0])
+
+			for _, color := range card.Colors {
+				if !slices.Contains(colors, mtgColorNameMap[color]) {
+					colors = append(colors, mtgColorNameMap[color])
+				}
+			}
+			if len(card.Colors) == 0 && !slices.Contains(colors, "colorless") {
+				colors = append(colors, "colorless")
+			}
+			if len(card.Colors) > 1 && !slices.Contains(colors, "multicolor") {
+				colors = append(colors, "multicolor")
 			}
 		}
 
 		sort.Slice(rarities, func(i, j int) bool {
 			return lorcanaRarityMap[rarities[i]] > lorcanaRarityMap[rarities[j]]
 		})
-		backend.Sets[code].Rarities = rarities
+		b.Sets[code].Rarities = rarities
 
 		sort.Strings(colors)
-		backend.Sets[code].Colors = colors
+		b.Sets[code].Colors = colors
 	}
 
-	return backend
+	return b
 }
 
 var lorcanaRarityMap = map[string]int{

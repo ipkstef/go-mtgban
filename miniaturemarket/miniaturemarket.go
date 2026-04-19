@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
-	"sync"
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
@@ -123,7 +122,12 @@ func (mm *Miniaturemarket) NumberOfProducts(ctx context.Context) (int, error) {
 		return 0, err
 	}
 
-	num, _ := doc.Find(`input[id="p-last-bottom"]`).Attr("value")
+	href, _ := doc.Find("a.page-link").Last().Attr("href")
+	u, err := url.Parse(href)
+	if err != nil {
+		return 0, err
+	}
+	num := u.Query().Get("p")
 	return strconv.Atoi(num)
 }
 
@@ -137,46 +141,29 @@ func (mm *Miniaturemarket) Load(ctx context.Context) error {
 	}
 	mm.printf("Loaded %d sealed products", len(mm.productMap))
 
-	pages := make(chan int)
-	channel := make(chan respChan)
-	var wg sync.WaitGroup
-
 	totalProducts, err := mm.NumberOfProducts(ctx)
 	if err != nil {
 		return err
 	}
 	mm.printf("Parsing %d items", totalProducts)
 
-	for i := 0; i < mm.MaxConcurrency; i++ {
-		wg.Add(1)
-		go func() {
-			for start := range pages {
-				err = mm.processPage(ctx, channel, start)
-				if err != nil {
-					mm.printf("%s", err.Error())
-				}
+	pageNums := make([]int, totalProducts)
+	for i := range pageNums {
+		pageNums[i] = i
+	}
+
+	mtgban.WorkerPool(ctx, mm.MaxConcurrency, pageNums,
+		func(ctx context.Context, page int, results chan<- respChan) error {
+			return mm.processPage(ctx, results, page)
+		},
+		func(record respChan) {
+			err := mm.inventory.AddRelaxed(record.cardId, record.invEntry)
+			if err != nil {
+				mm.printf("%v", err)
 			}
-			wg.Done()
-		}()
-	}
-
-	go func() {
-		for i := 0; i < totalProducts; i++ {
-			pages <- i
-		}
-		close(pages)
-
-		wg.Wait()
-		close(channel)
-	}()
-
-	for record := range channel {
-		err := mm.inventory.Add(record.cardId, record.invEntry)
-		if err != nil {
-			mm.printf("%v", err)
-			continue
-		}
-	}
+		},
+		mm.printf,
+	)
 
 	mm.inventoryDate = time.Now()
 

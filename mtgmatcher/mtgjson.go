@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"time"
 )
 
 // IdentifiersMap decodes MTGJSON identifiers where some keys are strings and
@@ -104,6 +105,8 @@ type Set struct {
 	Rarities []string
 	// List of card colors present in the set
 	Colors []string
+	// Precomputed ReleaseDate value
+	ReleaseDateTime time.Time
 
 	Booster       map[string]Booster `json:"booster"`
 	SealedProduct []SealedProduct    `json:"sealedProduct"`
