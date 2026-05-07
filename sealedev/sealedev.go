@@ -47,7 +47,7 @@ type SealedEVScraper struct {
 type evConfig struct {
 	Name           string
 	StatsFunc      func(values []float64) (float64, error)
-	SourceName     string
+	SourceStores   []string
 	Shorthand      string
 	FoundInBuylist bool
 	TargetsBuylist bool
@@ -61,20 +61,20 @@ func passthroughFirst(values []float64) (float64, error) {
 var evParameters = []evConfig{
 	// CK Buylist
 	{
-		Name:           "CK Buylist EV for Singles",
+		Name:           "Buylist EV for Singles",
 		Shorthand:      "SS",
 		StatsFunc:      passthroughFirst,
-		SourceName:     "CK",
+		SourceStores:   []string{"CK", "SCG"},
 		FoundInBuylist: true,
 		TargetsBuylist: true,
 	},
 
 	// TCG Low
 	{
-		Name:       "TCG Low EV",
-		Shorthand:  "TCGLowEV",
-		StatsFunc:  passthroughFirst,
-		SourceName: "TCGLow",
+		Name:         "TCG Low EV",
+		Shorthand:    "TCGLowEV",
+		StatsFunc:    passthroughFirst,
+		SourceStores: []string{"TCGLow"},
 	},
 	{
 		Name:      "TCG Low Sim",
@@ -82,8 +82,8 @@ var evParameters = []evConfig{
 		StatsFunc: func(values []float64) (float64, error) {
 			return stats.Median(values)
 		},
-		SourceName: "TCGLow",
-		Simulation: true,
+		SourceStores: []string{"TCGLow"},
+		Simulation:   true,
 	},
 
 	// TCG Direct (net)
@@ -91,7 +91,7 @@ var evParameters = []evConfig{
 		Name:           "TCG Direct (net) EV",
 		Shorthand:      "TCGDirectNetEV",
 		StatsFunc:      passthroughFirst,
-		SourceName:     "TCGDirectNet",
+		SourceStores:   []string{"TCGDirectNet"},
 		FoundInBuylist: true,
 	},
 	{
@@ -100,17 +100,17 @@ var evParameters = []evConfig{
 		StatsFunc: func(values []float64) (float64, error) {
 			return stats.Median(values)
 		},
-		SourceName:     "TCGDirectNet",
+		SourceStores:   []string{"TCGDirectNet"},
 		FoundInBuylist: true,
 		Simulation:     true,
 	},
 
 	// Card Trader Zero
 	{
-		Name:       "CT Zero EV",
-		Shorthand:  "CTZeroEV",
-		StatsFunc:  passthroughFirst,
-		SourceName: "CT0",
+		Name:         "CT Zero EV",
+		Shorthand:    "CTZeroEV",
+		StatsFunc:    passthroughFirst,
+		SourceStores: []string{"CT0"},
 	},
 	{
 		Name:      "CT Zero Sim",
@@ -118,8 +118,8 @@ var evParameters = []evConfig{
 		StatsFunc: func(values []float64) (float64, error) {
 			return stats.Median(values)
 		},
-		SourceName: "CT0",
-		Simulation: true,
+		SourceStores: []string{"CT0"},
+		Simulation:   true,
 	},
 }
 
@@ -213,7 +213,7 @@ func (ss *SealedEVScraper) runEV(uuid string) ([]result, []string) {
 						priceSource = ss.prices.Buylist
 					}
 
-					ev := valueInBooster(picks, priceSource, evParameters[i].SourceName, probabilities)
+					ev := valueInBooster(picks, priceSource, evParameters[i].SourceStores, probabilities)
 
 					channel <- resultChan{
 						i:  i,
@@ -264,7 +264,7 @@ func (ss *SealedEVScraper) runEV(uuid string) ([]result, []string) {
 				priceSource = ss.prices.Buylist
 			}
 
-			ev := valueInBooster(picks, priceSource, evParameters[i].SourceName, probabilities)
+			ev := valueInBooster(picks, priceSource, evParameters[i].SourceStores, probabilities)
 
 			channel <- resultChan{
 				i:  i,
@@ -328,7 +328,7 @@ func (ss *SealedEVScraper) runEV(uuid string) ([]result, []string) {
 			var link string
 			tcgID, _ := strconv.Atoi(co.Identifiers["tcgplayerProductId"])
 			if tcgID != 0 {
-				isDirect := evParameters[i].SourceName == "TCGDirectNet"
+				isDirect := slices.Contains(evParameters[i].SourceStores, "TCGDirectNet")
 				link = tcgplayer.GenerateProductURL(tcgID, "", ss.Affiliate, "", "", isDirect)
 			}
 
