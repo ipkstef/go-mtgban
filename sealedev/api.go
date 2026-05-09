@@ -232,7 +232,7 @@ func loadPrices(ctx context.Context, sig, selected string) (*BANPriceResponse, e
 	return &response, nil
 }
 
-func valueInBooster(uuids []string, prices map[string]map[string]*BanPrice, source string, probabilities []float64) float64 {
+func valueInBooster(uuids []string, prices map[string]map[string]*BanPrice, stores []string, probabilities []float64) float64 {
 	var total float64
 	for i, uuid := range uuids {
 		// Adjust price by its probability
@@ -241,8 +241,17 @@ func valueInBooster(uuids []string, prices map[string]map[string]*BanPrice, sour
 			probability = probabilities[i]
 		}
 
+		// Load the highest available value between the source stores
+		var price float64
+		for _, source := range stores {
+			sourcePrice := getPrice(uuid, prices[uuid][source])
+			if sourcePrice > price {
+				price = sourcePrice
+			}
+		}
+
 		// Add to the final value
-		total += getPrice(uuid, prices[uuid][source]) * probability
+		total += price * probability
 	}
 	return total
 }

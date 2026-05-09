@@ -312,23 +312,6 @@ func sortPrintings(sets map[string]*Set, printings []string) {
 	})
 }
 
-// Sort sealed products within a single set in alphabetical order
-func sortSourceProducts(sets map[string]*Set, setCode string, sources []string) {
-	set, found := sets[setCode]
-	if !found {
-		return
-	}
-
-	nameByUUID := make(map[string]string, len(set.SealedProduct))
-	for _, product := range set.SealedProduct {
-		nameByUUID[product.UUID] = product.Name
-	}
-
-	sort.Slice(sources, func(i, j int) bool {
-		return nameByUUID[sources[i]] < nameByUUID[sources[j]]
-	})
-}
-
 // Generate image URL using Scryfall - we assume that every card has such id
 func generateImageURL(card Card, version string) string {
 	id, found := card.Identifiers["scryfallId"]
@@ -399,6 +382,7 @@ func adjustTokens(sets map[string]*Set) {
 
 func (ap AllPrintings) Load() cardBackend {
 	canonicalNames := map[string]string{}
+	sealedNames := map[string]string{}
 	alternates := map[string]alternateProps{}
 	commanderKeywordMap := map[string]string{}
 	var allCardNames []string
@@ -424,6 +408,11 @@ func (ap AllPrintings) Load() cardBackend {
 			if !slices.Contains(tokens, token.Name) && !slices.Contains(allCardNames, token.Name) {
 				tokens = append(tokens, token.Name)
 			}
+		}
+
+		// Save the names of sealed products for later sorting
+		for _, product := range set.SealedProduct {
+			sealedNames[product.UUID] = product.Name
 		}
 	}
 
@@ -654,11 +643,13 @@ func (ap AllPrintings) Load() cardBackend {
 			for finish, sources := range card.SourceProducts {
 				var filtered []string
 				for _, source := range sources {
-					if isBaseSealed(ap.Data, set.Code, source) {
+					if isBaseSealed(ap.Data, source, card.UUID) {
 						filtered = append(filtered, source)
 					}
 				}
-				sortSourceProducts(ap.Data, set.Code, filtered)
+				sort.Slice(filtered, func(i, j int) bool {
+					return sealedNames[filtered[i]] < sealedNames[filtered[j]]
+				})
 				card.SourceProducts[finish] = filtered
 			}
 
@@ -986,7 +977,9 @@ func fillinSealedContents(sets map[string]*Set, uuids map[string]CardObject) {
 			continue
 		}
 
-		sortSourceProducts(sets, co.SetCode, res)
+		sort.Slice(res, func(i, j int) bool {
+			return uuids[res[i]].Name < uuids[res[j]].Name
+		})
 
 		uuids[uuid].SourceProducts["sealed"] = res
 	}
@@ -1073,42 +1066,69 @@ func sealedWithinSealed(product SealedProduct) []string {
 	return list
 }
 
-// Check if the sealed product contains a base product, i.e. if there is at least
-// one component that doesn't need additional extraction
-func isBaseSealed(sets map[string]*Set, setCode, sealedUUID string) bool {
-	set, found := sets[setCode]
-	if !found {
-		return false
-	}
-
-	for _, product := range set.SealedProduct {
-		if sealedUUID != product.UUID {
-			continue
+// Check whether the sealed product directly contains the given card. "Directly"
+// means via a card/deck/pack entry at the top level (or inside a variable
+// config) — not reachable only through a nested sealed sub-product. Finish is
+// not checked here; we trust MTGJSON's per-finish SourceProducts bucketing.
+func isBaseSealed(sets map[string]*Set, productUUID, cardUUID string) bool {
+	for _, set := range sets {
+		for _, product := range set.SealedProduct {
+			if product.UUID != productUUID {
+				continue
+			}
+			return contentsContainCard(sets, product.Contents, cardUUID)
 		}
+	}
+	return false
+}
 
-		for key, contents := range product.Contents {
-			for _, content := range contents {
-				switch key {
-				case "card", "deck", "pack":
+func contentsContainCard(sets map[string]*Set, contents map[string][]SealedContent, cardUUID string) bool {
+	for key, items := range contents {
+		for _, item := range items {
+			switch key {
+			case "card":
+				if item.UUID == cardUUID {
 					return true
-
-				case "sealed":
-					return isBaseSealed(sets, content.Set, content.UUID)
-
-				case "variable":
-					for _, config := range content.Configs {
-						if config["card"] != nil ||
-							config["deck"] != nil ||
-							config["sealed"] != nil ||
-							config["pack"] != nil {
-							return true
+				}
+			case "deck":
+				if set, ok := sets[strings.ToUpper(item.Set)]; ok {
+					for _, d := range set.Decks {
+						if d.Name != item.Name {
+							continue
+						}
+						for _, list := range [][]DeckCard{
+							d.MainBoard, d.SideBoard,
+							d.Commander, d.DisplayCommander,
+							d.Planes, d.Schemes, d.Tokens,
+						} {
+							for _, dc := range list {
+								if dc.UUID == cardUUID {
+									return true
+								}
+							}
 						}
 					}
 				}
+			case "pack":
+				if set, ok := sets[strings.ToUpper(item.Set)]; ok {
+					if booster, ok := set.Booster[item.Code]; ok {
+						for _, sheet := range booster.Sheets {
+							if _, ok := sheet.Cards[cardUUID]; ok {
+								return true
+							}
+						}
+					}
+				}
+			case "variable":
+				for _, config := range item.Configs {
+					if contentsContainCard(sets, config, cardUUID) {
+						return true
+					}
+				}
+				// "sealed": intentionally not handled — nested products don't count as direct.
 			}
 		}
 	}
-
 	return false
 }
 
