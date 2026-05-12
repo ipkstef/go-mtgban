@@ -16,6 +16,9 @@ type Card struct {
 	Quantity int    `json:"Quantity,omitempty,string"`
 	Price    string `json:"Price,omitempty"`
 	BuyPrice string `json:"Buy Price,omitempty"`
+
+	// The matching SKU id of the card
+	TCGplayerID int `json:"TCGPlayerId,omitempty,string"`
 }
 
 // Map with Edition as keys

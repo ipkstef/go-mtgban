@@ -10,6 +10,7 @@ import (
 
 	"github.com/mtgban/go-mtgban/mtgban"
 	"github.com/mtgban/go-mtgban/mtgmatcher"
+	"github.com/mtgban/go-mtgban/tcgplayer"
 )
 
 type MTGMintCard struct {
@@ -21,6 +22,8 @@ type MTGMintCard struct {
 
 	inventory mtgban.InventoryRecord
 	buylist   mtgban.BuylistRecord
+
+	SKUsData tcgplayer.SKUMap
 }
 
 func NewScraper() *MTGMintCard {
@@ -36,7 +39,7 @@ func (mint *MTGMintCard) printf(format string, a ...interface{}) {
 	}
 }
 
-func (mint *MTGMintCard) processEntry(card Card, condition, finish, language, edition, setCode, editionId string) {
+func (mint *MTGMintCard) processEntry(sku2uuid map[int]string, card Card, condition, finish, language, edition, setCode, editionId string) {
 	cond := map[string]string{
 		"Mint": "NM",
 		"SP":   "SP",
@@ -58,38 +61,42 @@ func (mint *MTGMintCard) processEntry(card Card, condition, finish, language, ed
 		link += "&utm_source=" + url.QueryEscape(mint.Partner) + "&utm_medium=referral&utm_campaign=" + url.QueryEscape(mint.Partner)
 	}
 
-	theCard, err := preprocess(card.Name, card.Number, finish, language, edition, setCode)
-	if err != nil {
-		if !errors.Is(err, mtgmatcher.ErrUnsupported) {
-			mint.printf("%v", err)
-		}
-		return
-	}
-
-	cardId, err := mtgmatcher.Match(theCard)
-	if errors.Is(err, mtgmatcher.ErrUnsupported) {
-		return
-	} else if err != nil {
-		// Skip errors on tokens
-		if strings.Contains(card.Name, "Token") {
+	cardId, found := sku2uuid[card.TCGplayerID]
+	if !found {
+		theCard, err := preprocess(card.Name, card.Number, finish, language, edition, setCode)
+		if err != nil {
+			if !errors.Is(err, mtgmatcher.ErrUnsupported) {
+				mint.printf("%v", err)
+			}
 			return
 		}
-		mint.printf("%v", err)
-		mint.printf("%q", theCard)
-		mint.printf("%s|%s|%s|%s|%s|%s", card.Name, card.Number, finish, language, edition, setCode)
-		mint.printf("%s", link)
 
-		var alias *mtgmatcher.AliasingError
-		if errors.As(err, &alias) {
-			probes := alias.Probe()
-			for _, probe := range probes {
-				card, _ := mtgmatcher.GetUUID(probe)
-				mint.printf("- %s", card)
+		cardId, err = mtgmatcher.Match(theCard)
+		if errors.Is(err, mtgmatcher.ErrUnsupported) {
+			return
+		} else if err != nil {
+			// Skip errors on tokens
+			if strings.Contains(card.Name, "Token") {
+				return
 			}
+			mint.printf("%v", err)
+			mint.printf("%q", theCard)
+			mint.printf("%s|%s|%s|%s|%s|%s", card.Name, card.Number, finish, language, edition, setCode)
+			mint.printf("%s", link)
+
+			var alias *mtgmatcher.AliasingError
+			if errors.As(err, &alias) {
+				probes := alias.Probe()
+				for _, probe := range probes {
+					card, _ := mtgmatcher.GetUUID(probe)
+					mint.printf("- %s", card)
+				}
+			}
+			return
 		}
-		return
 	}
 
+	var err error
 	var sellPrice float64
 	if card.Price != "" && card.Quantity > 0 {
 		sellPrice, err = strconv.ParseFloat(card.Price, 64)
@@ -149,6 +156,7 @@ func (mint *MTGMintCard) processEntry(card Card, condition, finish, language, ed
 }
 
 func (mint *MTGMintCard) Load(ctx context.Context) error {
+	mint.printf("Loading MTGMintCard data")
 	mintClient, err := NewMintClient(ctx)
 	if err != nil {
 		return err
@@ -157,8 +165,20 @@ func (mint *MTGMintCard) Load(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-
 	mint.printf("Found %d editions", len(productList))
+
+	mint.printf("Converting TCGSKU into reusable format")
+	sku2uuid := map[int]string{}
+	for uuid, skus := range mint.SKUsData {
+		for _, sku := range skus {
+			id, err := mtgmatcher.MatchId(uuid, sku.Printing == "FOIL", sku.Finish == "ETCHED")
+			if err != nil {
+				continue
+			}
+			sku2uuid[sku.SkuId] = id
+		}
+	}
+	mint.printf("Found %d skus", len(sku2uuid))
 
 	for edition, product := range productList {
 		for language, finishes := range product.Cards {
@@ -166,7 +186,7 @@ func (mint *MTGMintCard) Load(ctx context.Context) error {
 				for cond, rarities := range conditions {
 					for _, cards := range rarities {
 						for _, card := range cards {
-							mint.processEntry(card, cond, finish, language, edition, product.Abbreviation, product.EditionId)
+							mint.processEntry(sku2uuid, card, cond, finish, language, edition, product.Abbreviation, product.EditionId)
 						}
 					}
 				}
