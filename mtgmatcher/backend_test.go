@@ -22,15 +22,15 @@ func setupBenchmark() {
 		break
 	}
 
-	SliceOfObj = backend.AllCanonicalNames
-	SliceOfStr = backend.AllNames
+	SliceOfObj = defaultBackend.AllCanonicalNames
+	SliceOfStr = defaultBackend.AllNames
 }
 
 func backendUUIDs(name string, doneWhenFound bool) (printings []string) {
 	name = Normalize(name)
-	for key := range backend.UUIDs {
-		if Normalize(backend.UUIDs[key].Name) == name {
-			printings = backend.UUIDs[key].Printings
+	for key := range defaultBackend.UUIDs {
+		if Normalize(defaultBackend.UUIDs[key].Name) == name {
+			printings = defaultBackend.UUIDs[key].Printings
 			if doneWhenFound {
 				return
 			}
