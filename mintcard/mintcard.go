@@ -54,6 +54,9 @@ func (mint *MTGMintCard) processEntry(card Card, condition, finish, language, ed
 	}
 
 	link := "https://www.mtgmintcard.com/index.php?main_page=product_info&products_id=" + card.ID
+	if mint.Partner != "" {
+		link += "&utm_source=" + url.QueryEscape(mint.Partner) + "&utm_medium=referral&utm_campaign=" + url.QueryEscape(mint.Partner)
+	}
 
 	theCard, err := preprocess(card.Name, card.Number, finish, language, edition, setCode)
 	if err != nil {
@@ -121,6 +124,9 @@ func (mint *MTGMintCard) processEntry(card Card, condition, finish, language, ed
 		}
 
 		link := "https://www.mtgmintcard.com/buylist?action=advanced_search&ed=" + editionId + "&mo_1=1&mo_2=1&card_name=" + url.QueryEscape(card.Name)
+		if mint.Partner != "" {
+			link += "&utm_source=" + url.QueryEscape(mint.Partner) + "&utm_medium=referral&utm_campaign=" + url.QueryEscape(mint.Partner)
+		}
 
 		gradeMap := grading(cardId, buyPrice)
 		for _, grade := range mtgban.DefaultGradeTags {
