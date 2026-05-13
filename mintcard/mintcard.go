@@ -171,6 +171,12 @@ func (mint *MTGMintCard) Load(ctx context.Context) error {
 	sku2uuid := map[int]string{}
 	for uuid, skus := range mint.SKUsData {
 		for _, sku := range skus {
+			// Skip non-English printings
+			if sku.Language != "ENGLISH" {
+				continue
+			}
+
+			// Convert tcg sku ids into ban ids
 			id, err := mtgmatcher.MatchId(uuid, sku.Printing == "FOIL", sku.Finish == "ETCHED")
 			if err != nil {
 				continue
