@@ -13,6 +13,7 @@ permissions:
 concurrency:
   group: bantool-tcgplayer
   cancel-in-progress: false
+  queue: max
 
 jobs:
   cache-datastore:
