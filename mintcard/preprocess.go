@@ -96,6 +96,7 @@ func preprocess(cardName, number, finish, langauge, edition, setCode string) (*m
 		variant += " Prerelease"
 	}
 
+	number = strings.TrimLeft(number, "0")
 	if number != "" && len(mtgmatcher.MatchInSetNumber(cardName, setCode, number)) == 1 {
 		variant += " " + number
 	}
