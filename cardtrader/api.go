@@ -96,14 +96,15 @@ const (
 )
 
 type Blueprint struct {
-	Id         int    `json:"id"`
-	Name       string `json:"name"`
-	Version    string `json:"version"`
-	CategoryId int    `json:"category_id"`
-	GameId     int    `json:"game_id"`
-	Slug       string `json:"slug"`
-	ScryfallId string `json:"scryfall_id"`
-	Expansion  struct {
+	Id          int    `json:"id"`
+	Name        string `json:"name"`
+	Version     string `json:"version"`
+	GameId      int    `json:"game_id"`
+	CategoryId  int    `json:"category_id"`
+	ExpansionId int    `json:"expansion_id"`
+	ScryfallId  string `json:"scryfall_id"`
+
+	Expansion struct {
 		Name string `json:"name"`
 		Code string `json:"code"`
 	} `json:"expansion"`
@@ -117,7 +118,8 @@ type Blueprint struct {
 		Number   string `json:"collector_number"`
 		Language string `json:"mtg_language"`
 	} `json:"fixed_properties"`
-	ExpansionId int `json:"expansion_id"`
+	// Needed to extract year for certain sets
+	Slug string `json:"slug"`
 }
 
 type Product struct {
