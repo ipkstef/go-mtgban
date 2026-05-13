@@ -103,6 +103,7 @@ type Blueprint struct {
 	CategoryId  int    `json:"category_id"`
 	ExpansionId int    `json:"expansion_id"`
 	ScryfallId  string `json:"scryfall_id"`
+	TCGplayerId int    `json:"tcg_player_id"`
 
 	Expansion struct {
 		Name string `json:"name"`
