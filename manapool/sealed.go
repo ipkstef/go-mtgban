@@ -106,6 +106,6 @@ func (mp *ManapoolSealed) Info() (info mtgban.ScraperInfo) {
 	info.Shorthand = "MPSealed"
 	info.InventoryTimestamp = &mp.inventoryDate
 	info.SealedMode = true
-	info.info.NoQuantityInventory = true
+	info.NoQuantityInventory = true
 	return
 }
