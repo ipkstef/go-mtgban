@@ -357,7 +357,7 @@ func (abu *ABUGames) Buylist() mtgban.BuylistRecord {
 
 var availableMarketNames = []string{
 	"ABU Games",
-	"ABU Games (with pictures)",
+	"ABU Games Scans",
 }
 
 var availableTraderNames = []string{
@@ -366,9 +366,9 @@ var availableTraderNames = []string{
 }
 
 var name2shorthand = map[string]string{
-	"ABU Games":                 "ABUGames",
-	"ABU Games (with pictures)": "ABUPictures",
-	"ABU Games (credit)":        "ABUCredit",
+	"ABU Games":          "ABUGames",
+	"ABU Games Scans":    "ABUScans",
+	"ABU Games (credit)": "ABUCredit",
 }
 
 func (abu *ABUGames) MarketNames() []string {
