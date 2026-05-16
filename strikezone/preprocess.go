@@ -6,7 +6,7 @@ import (
 	"github.com/mtgban/go-mtgban/mtgmatcher"
 )
 
-func preprocess(cardName, edition, notes string) (*mtgmatcher.InputCard, error) {
+func preprocess(cardName, edition, notes, cond string) (*mtgmatcher.InputCard, error) {
 	var variation string
 
 	// Skip tokens, too many variations
@@ -299,10 +299,19 @@ func preprocess(cardName, edition, notes string) (*mtgmatcher.InputCard, error) 
 		variation += "Etched"
 	}
 
+	var language string
+	for lang := range mtgmatcher.LanguageTag2LanguageCode {
+		if strings.Contains(cond, lang) {
+			language = lang
+			break
+		}
+	}
+
 	return &mtgmatcher.InputCard{
 		Name:      cardName,
 		Variation: variation,
 		Edition:   edition,
 		Foil:      isFoil,
+		Language:  language,
 	}, nil
 }

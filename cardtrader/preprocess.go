@@ -18,6 +18,9 @@ func Preprocess(bp *Blueprint) (*mtgmatcher.InputCard, error) {
 
 	// Some, but not all, have a proper id we can reuse right away
 	id := mtgmatcher.ExternalUUID(bp.ScryfallId)
+	if id == "" {
+		id = mtgmatcher.ExternalUUID(fmt.Sprintf("%d", bp.TCGplayerId))
+	}
 	if id != "" {
 		return &mtgmatcher.InputCard{
 			Id: id,

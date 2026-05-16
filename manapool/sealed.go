@@ -81,9 +81,8 @@ func (mp *ManapoolSealed) Load(ctx context.Context) error {
 				u.RawQuery = v.Encode()
 
 				out := &mtgban.InventoryEntry{
-					Price:    float64(sealed.LowPrice) / 100.0,
-					URL:      u.String(),
-					Quantity: sealed.AvailableQuantity,
+					Price: float64(sealed.LowPrice) / 100.0,
+					URL:   u.String(),
 				}
 				err = mp.inventory.AddUnique(product.UUID, out)
 			}
@@ -107,5 +106,6 @@ func (mp *ManapoolSealed) Info() (info mtgban.ScraperInfo) {
 	info.Shorthand = "MPSealed"
 	info.InventoryTimestamp = &mp.inventoryDate
 	info.SealedMode = true
+	info.NoQuantityInventory = true
 	return
 }

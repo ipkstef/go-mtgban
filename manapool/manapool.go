@@ -102,7 +102,6 @@ func (mp *Manapool) Load(ctx context.Context) error {
 		out := &mtgban.InventoryEntry{
 			Conditions: conds,
 			Price:      price,
-			Quantity:   card.AvailableQuantity,
 			URL:        link,
 		}
 		err = mp.inventory.AddUnique(cardId, out)
@@ -121,5 +120,6 @@ func (mp *Manapool) Info() (info mtgban.ScraperInfo) {
 	info.Name = "Manapool"
 	info.Shorthand = "MP"
 	info.InventoryTimestamp = &mp.inventoryDate
+	info.NoQuantityInventory = true
 	return
 }

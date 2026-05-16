@@ -13,6 +13,7 @@ permissions:
 concurrency:
   group: bantool-cardtrader
   cancel-in-progress: false
+  queue: max
 
 jobs:
   cache-datastore:

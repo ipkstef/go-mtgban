@@ -274,8 +274,32 @@ var options = map[string]*scraperOption{
 	},
 	"mintcard": {
 		Init: func() (mtgban.Scraper, error) {
+			tcgSKUPath := os.Getenv("MTGJSON_TCGSKU_PATH")
+			if tcgSKUPath == "" {
+				return nil, errors.New("missing MTGJSON_TCGSKU_PATH env var")
+			}
+
 			scraper := mintcard.NewScraper()
 			scraper.LogCallback = GlobalLogCallback
+			scraper.Partner = os.Getenv("MINT_PARTNER")
+
+			start := time.Now()
+			skuBucket, err := initializeBucket(tcgSKUPath, os.Getenv("B2_KEY_ID_DATASTORE"), os.Getenv("B2_KEY_ID_DATASTORE"))
+			if err != nil {
+				return nil, err
+			}
+			skuReader, err := simplecloud.InitReader(context.Background(), skuBucket, tcgSKUPath)
+			if err != nil {
+				return nil, err
+			}
+			defer skuReader.Close()
+			skus, err := tcgplayer.LoadTCGSKUs(skuReader)
+			if err != nil {
+				return nil, err
+			}
+			scraper.SKUsData = skus
+			log.Println("loading skus took:", time.Since(start))
+
 			return scraper, nil
 		},
 	},

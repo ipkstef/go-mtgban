@@ -58,7 +58,7 @@ type CartResponse struct {
 			Width           any    `json:"width"`
 			Height          any    `json:"height"`
 			Depth           any    `json:"depth"`
-			Weight          int    `json:"weight"`
+			Weight          any    `json:"weight"`
 			IsShiny         bool   `json:"is_shiny"`
 			ProductSlug     string `json:"product_slug"`
 			CategorySlug    string `json:"category_slug"`
@@ -77,7 +77,7 @@ type CartResponse struct {
 		Edition                    string `json:"edition"`
 		Rarity                     string `json:"rarity"`
 		Variation                  string `json:"variation"`
-		Weight                     int    `json:"weight"`
+		Weight                     any    `json:"weight"`
 		AllowInternationalShipping bool   `json:"allow_international_shipping"`
 		ID                         int    `json:"id"`
 		IsPresale                  bool   `json:"is_presale"`

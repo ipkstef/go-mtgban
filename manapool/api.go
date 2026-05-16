@@ -23,7 +23,9 @@ type Card struct {
 	ConditionID        string `json:"condition_id"`
 	FinishID           string `json:"finish_id"`
 	LowPrice           int    `json:"low_price"`
-	AvailableQuantity  int    `json:"available_quantity"`
+
+	// Total quantity across listings
+	AvailableQuantity int `json:"available_quantity"`
 }
 
 type Product struct {
@@ -35,7 +37,9 @@ type Product struct {
 	TcgplayerProductID int    `json:"tcgplayer_product_id"`
 	LanguageID         string `json:"language_id"`
 	LowPrice           int    `json:"low_price"`
-	AvailableQuantity  int    `json:"available_quantity"`
+
+	// Total quantity across listings
+	AvailableQuantity int `json:"available_quantity"`
 }
 
 const (
